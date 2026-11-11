@@ -1,0 +1,5 @@
+#!/bin/sh
+# Командная строка OutpostGate Pro (в стиле MikroTik) прямо в консоли контейнера:
+#   docker exec -it <контейнер> outpost        или в GNS3: Auxiliary console -> outpost
+cd /opt/outpost-gate-pro || exit 1
+exec python3 -m app.cli "$@"

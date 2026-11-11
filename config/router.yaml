@@ -1,0 +1,19 @@
+# Конфигурация роутера — единый источник правды (аналог /export RouterOS)
+# Роли интерфейсов отделены от имён: в GNS3 это eth0/eth1, на железе enp1s0 и т.п.
+
+system:
+  identity: outpost-gate-pro
+
+interface-lists:
+  WAN: [eth0]
+  LAN: [eth1]
+
+ip:
+  addresses:
+    - { address: 192.168.88.1/24, interface: eth1 }
+  # routes: []
+  # dhcp-client: { interface: eth0 }
+  # dhcp-server: { interface: eth1, pool: 192.168.88.10-192.168.88.254 }
+  # firewall:
+  #   nat:
+  #     - { chain: srcnat, out-interface-list: WAN, action: masquerade }

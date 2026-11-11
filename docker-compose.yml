@@ -1,0 +1,45 @@
+# Режим DEV: запуск на рабочем компьютере.
+# Контейнер в СВОЁМ network namespace — сеть хоста он не видит и не меняет.
+#   docker compose up --build
+#   http://localhost:8001      — веб-интерфейс
+#   http://localhost:8001/docs — Swagger
+#   ssh -p 2223 admin@localhost — командная строка в стиле MikroTik
+name: outpost-gate-pro   # имя проекта не зависит от названия папки
+services:
+  router:
+    build: .
+    image: outpost-gate-pro:dev
+    container_name: outpost-gate-pro-dev
+    restart: unless-stopped   # «Перезапустить сервис» в System: Docker поднимет контейнер сам
+    environment:
+      ROUTER_MODE: dev
+      PYTHONUNBUFFERED: "1"
+      # ROUTER_ADMIN_PASSWORD: "свой-пароль"   # иначе admin без пароля (вход только из локальной сети)
+    cap_add:
+      - NET_ADMIN        # действует только внутри своего namespace
+      - NET_RAW
+    device_cgroup_rules:
+      - "c 108:0 rwm"    # /dev/ppp для L2TP (на хосте: sudo modprobe ppp_generic)
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    ports:
+      - "8001:8000"
+      - "2223:22"        # SSH -> CLI роутера
+    volumes:
+      - ./app:/opt/outpost-gate-pro/app       # правки кода без пересборки
+      - ./web:/opt/outpost-gate-pro/web
+      - ./config:/etc/outpost-gate-pro            # папка целиком: нужна для атомарной записи router.yaml
+      - ./data:/var/lib/outpost-gate-pro          # снимки конфига (data/snapshots)
+    networks:
+      wan:
+        priority: 1000   # подключается первой -> eth0
+      lan:
+        priority: 100    # -> eth1
+
+# Две тестовые сети — получаем eth0 (wan) и eth1 (lan) внутри контейнера
+networks:
+  wan:
+    driver: bridge
+  lan:
+    driver: bridge
+    internal: true

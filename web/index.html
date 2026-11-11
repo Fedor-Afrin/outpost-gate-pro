@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>OutpostGate Pro</title>
+  <link rel="stylesheet" href="css/style.css?v=0.12.0">
+</head>
+<body>
+  <!-- вход -->
+  <div id="login" class="overlay" hidden>
+    <form id="login-form" class="card login-card">
+      <div class="lang-switch" data-no-i18n><button type="button" data-lang="en">EN</button><button type="button" data-lang="ru">RU</button><button type="button" data-lang="he" title="עברית">עב</button></div>
+      <h2>OutpostGate Pro</h2>
+      <p class="hint">Войдите, чтобы управлять роутером.</p>
+      <label>Пользователь <input name="name" autocomplete="username" value="admin" required></label>
+      <label>Пароль <input name="password" type="password" autocomplete="current-password"></label>
+      <button type="submit">Войти</button>
+      <span id="login-error" class="error"></span>
+      <p class="hint small">Первый вход: <b>admin</b>, пароль пустой (только из локальной сети).</p>
+    </form>
+  </div>
+
+  <!-- обязательная смена пароля -->
+  <div id="pwchange" class="overlay" hidden>
+    <form id="pwchange-form" class="card login-card">
+      <h2 id="pwchange-title">Смените пароль</h2>
+      <p class="hint" id="pwchange-hint">Пароль был выдан администратором — задайте свой (не короче 8 символов).</p>
+      <label id="pwchange-old">Текущий пароль <input name="old" type="password" autocomplete="current-password"></label>
+      <label>Новый пароль <input name="new" type="password" autocomplete="new-password" minlength="8" required></label>
+      <label>Ещё раз <input name="new2" type="password" autocomplete="new-password" minlength="8" required></label>
+      <button type="submit">Сохранить</button>
+      <button type="button" id="pwchange-cancel" class="link">Отмена</button>
+      <span id="pwchange-error" class="error"></span>
+    </form>
+  </div>
+
+  <aside>
+    <h2 id="identity" data-no-i18n>OutpostGate Pro</h2>
+    <button type="button" id="safe-btn" class="safe-btn" title="Safe Mode: откат, если связь с роутером пропадёт">Safe Mode</button>
+    <nav>
+      <a href="#status" data-page="status">Status</a>
+      <a href="#wan" data-page="wan">WAN</a>
+      <a href="#lan" data-page="lan">LAN</a>
+      <a href="#vpn" data-page="vpn">VPN</a>
+      <a href="#firewall" data-page="firewall">Firewall</a>
+      <a href="#routing" data-page="routing">Routing</a>
+      <a href="#tools" data-page="tools">Tools</a>
+      <a href="#system" data-page="system">System</a>
+    </nav>
+    <p id="sysinfo"></p>
+    <div class="whoami"><span id="whoami"></span> <a href="#" id="logout">Выйти</a></div>
+    <div class="lang-switch" data-no-i18n><button type="button" data-lang="en">EN</button><button type="button" data-lang="ru">RU</button><button type="button" data-lang="he" title="עברית">עב</button></div>
+  </aside>
+
+  <main>
+    <div id="safe-banner" class="safe-banner" hidden>
+      <b>Safe Mode</b> — <span id="safe-text"></span>
+      <button type="button" id="safe-commit">Подтвердить изменения</button>
+      <button type="button" id="safe-rollback" class="danger">Откатить сейчас</button>
+    </div>
+    <div id="safe-event" class="safe-event" hidden></div>
+    <div id="nopw-banner" class="nopw-banner" hidden>
+      Пароль администратора <b>не задан</b>: войти может любой из локальной сети.
+      <button type="button" id="nopw-set">Задать пароль</button>
+    </div>
+    <!-- Status -->
+    <section id="page-status" class="page">
+      <h1>Status</h1>
+      <div class="status-cards">
+        <div class="card scard" id="st-wan"></div>
+        <div class="card scard" id="st-vpn"></div>
+        <div class="card scard" id="st-lan"></div>
+        <div class="card scard" id="st-sys"></div>
+      </div>
+      <div class="card wide">
+        <h2>Трафик интерфейсов</h2>
+        <table class="compact">
+          <thead><tr><th>Интерфейс</th><th>Роль</th><th>Линк</th><th>↓ Сейчас</th><th>↑ Сейчас</th><th>↓ Всего</th><th>↑ Всего</th></tr></thead>
+          <tbody id="st-traffic"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- WAN -->
+    <section id="page-wan" class="page">
+      <h1>WAN</h1>
+
+      <div class="card" id="wan-status">
+        <div class="status-grid">
+          <div><span class="label">Интерфейс</span><span id="ws-iface">—</span></div>
+          <div><span class="label">Линк</span><span id="ws-link">—</span></div>
+          <div><span class="label">Состояние</span><span id="ws-state">—</span></div>
+          <div><span class="label">IP-адрес</span><span id="ws-addr">—</span></div>
+          <div><span class="label">Шлюз</span><span id="ws-gw">—</span></div>
+          <div><span class="label">DNS</span><span id="ws-dns">—</span></div>
+          <div><span class="label">MAC</span><span id="ws-mac">—</span></div>
+          <div><span class="label">Аренда до</span><span id="ws-lease">—</span></div>
+        </div>
+        <button id="wan-renew" type="button" hidden>Обновить аренду DHCP</button>
+      </div>
+
+      <form id="wan-form" class="card form">
+        <h2>Настройки</h2>
+        <label class="row">Интерфейс WAN
+          <select name="interface" id="wan-iface"></select>
+        </label>
+
+        <fieldset class="modes">
+          <label><input type="radio" name="mode" value="dhcp"> Получить автоматически (DHCP)</label>
+          <label><input type="radio" name="mode" value="static"> Настроить вручную</label>
+          <label><input type="radio" name="mode" value="none"> Не настраивать (адрес задаёт система)</label>
+        </fieldset>
+
+        <div id="wan-static">
+          <label class="row">IP-адрес / маска <input name="address" placeholder="203.0.113.10/24"></label>
+          <label class="row">Шлюз <input name="gateway" placeholder="203.0.113.1"></label>
+        </div>
+        <label class="row">Предпочитаемый DNS <input name="dns1" placeholder="1.1.1.1"></label>
+        <label class="row">Альтернативный DNS <input name="dns2" placeholder="8.8.8.8"></label>
+        <p class="hint">В режиме DHCP поля DNS можно оставить пустыми — тогда используются DNS провайдера.</p>
+
+        <div class="toolbar">
+          <button type="submit">Применить</button>
+          <span id="wan-error" class="error"></span>
+          <span id="wan-ok" class="ok"></span>
+        </div>
+      </form>
+    </section>
+
+    <!-- LAN -->
+    <section id="page-lan" class="page">
+      <h1>LAN</h1>
+
+      <div class="card">
+        <div class="status-grid">
+          <div><span class="label">Состояние</span><span id="ls-state">—</span></div>
+          <div><span class="label">DHCP и DNS</span><span id="ls-dns">—</span></div>
+          <div><span class="label">Мост</span><span id="ls-bridge">—</span></div>
+          <div><span class="label">Адрес роутера</span><span id="ls-addr">—</span></div>
+        </div>
+        <table class="compact">
+          <thead><tr><th>Порт</th><th>Роль</th><th>Линк</th><th>MAC</th></tr></thead>
+          <tbody id="lan-ports"></tbody>
+        </table>
+      </div>
+
+      <form id="lan-form" class="card form">
+        <h2>Настройки</h2>
+        <label class="check"><input type="checkbox" name="enabled"> Включить LAN (мост, DHCP, DNS, NAT)</label>
+        <label class="row">IP-адрес роутера / маска <input name="address" placeholder="192.168.88.1/24" required></label>
+
+        <div class="row-block">
+          <span>Порты LAN</span>
+          <label class="check"><input type="checkbox" name="ports_auto"> Все порты, кроме WAN</label>
+          <div id="lan-port-list" class="port-list"></div>
+        </div>
+
+        <h2>DHCP-сервер</h2>
+        <label class="check"><input type="checkbox" name="dhcp_enabled"> Раздавать адреса</label>
+        <label class="row">Начало диапазона <input name="pool_start" placeholder="192.168.88.10"></label>
+        <label class="row">Конец диапазона <input name="pool_end" placeholder="192.168.88.254"></label>
+        <label class="row">Срок аренды
+          <select name="lease_time">
+            <option value="1h">1 час</option><option value="12h">12 часов</option>
+            <option value="1d">1 день</option><option value="7d">7 дней</option>
+          </select>
+        </label>
+        <p class="hint">Клиенты получают роутер как шлюз и DNS. DNS-запросы роутер пересылает серверам WAN.</p>
+
+        <h2>Безопасность</h2>
+        <label class="check"><input type="checkbox" name="wan_management"> Разрешить управление со стороны WAN (веб и SSH)</label>
+        <p class="hint">Остальные входящие соединения с WAN закрыты всегда. Выключайте, когда роутер настроен и управляется из LAN или через VPN.</p>
+
+        <div class="toolbar">
+          <button type="submit">Применить</button>
+          <span id="lan-error" class="error"></span>
+          <span id="lan-ok" class="ok"></span>
+        </div>
+      </form>
+
+      <div class="card wide">
+        <h2>Устройства (DHCP-аренды)</h2>
+        <table class="compact">
+          <thead><tr><th>Имя</th><th>IP</th><th>MAC</th><th>Производитель</th><th>Аренда до</th><th></th></tr></thead>
+          <tbody id="lan-leases"></tbody>
+        </table>
+      </div>
+
+      <div class="card wide" id="static-card">
+        <h2>Закреплённые адреса</h2>
+        <p class="hint">Устройство с этим MAC всегда получает этот IP. Удобнее закреплять адреса вне пула DHCP.
+          Быстрее всего — кнопкой «Закрепить» в списке устройств.</p>
+        <form id="static-form" class="toolbar">
+          <input name="mac" placeholder="MAC: 00:0b:82:aa:bb:cc" required>
+          <input name="ip" placeholder="IP: 192.168.88.20" required>
+          <input name="name" placeholder="Имя: Телефон бухгалтера">
+          <button type="submit">+ Закрепить</button>
+          <span id="static-error" class="error"></span>
+        </form>
+        <table class="compact">
+          <thead><tr><th>Имя</th><th>IP</th><th>MAC</th><th>Примечание</th><th></th></tr></thead>
+          <tbody id="static-leases"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- VPN -->
+    <section id="page-vpn" class="page">
+      <h1>VPN</h1>
+      <div class="tabs" id="vpn-tabs">
+        <a class="tab" data-kind="wireguard">WireGuard</a>
+        <a class="tab" data-kind="amneziawg">AmneziaWG</a>
+        <a class="tab" data-kind="l2tp">L2TP/IPsec</a>
+      </div>
+      <p class="hint" id="vpn-active-hint">Одновременно работает один туннель: включение одного выключает остальные.</p>
+
+      <div id="wg-panel">
+      <div class="card">
+        <div class="status-grid">
+          <div><span class="label">Состояние</span><span id="vs-state">—</span></div>
+          <div><span class="label">Handshake</span><span id="vs-hs">—</span></div>
+          <div><span class="label">Сервер</span><span id="vs-endpoint">—</span></div>
+          <div><span class="label">Трафик</span><span id="vs-traffic">—</span></div>
+          <div class="full"><span class="label">Ключ роутера</span><code id="vs-pub">—</code></div>
+        </div>
+        <span id="vs-error" class="error"></span>
+      </div>
+
+      <div class="card">
+        <h2>Импорт конфига</h2>
+        <p class="hint">Вставьте содержимое .conf от администратора сервера или выберите файл — поля ниже заполнятся сами.</p>
+        <textarea id="wg-import" rows="6" placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = 10.8.0.2/32&#10;&#10;[Peer]&#10;PublicKey = ...&#10;Endpoint = vpn.example.com:51820&#10;AllowedIPs = 0.0.0.0/0"></textarea>
+        <div class="toolbar">
+          <input type="file" id="wg-file" accept=".conf,text/plain">
+          <button type="button" id="wg-parse">Разобрать</button>
+          <span id="wg-parse-msg" class="ok"></span>
+        </div>
+      </div>
+
+      <form id="wg-form" class="card form">
+        <h2>Настройки</h2>
+        <label class="check"><input type="checkbox" name="enabled"> Включить туннель</label>
+
+        <fieldset class="modes">
+          <label><input type="radio" name="mode" value="full"> Весь трафик через VPN</label>
+          <label><input type="radio" name="mode" value="split"> Только сети компании (split tunnel)</label>
+        </fieldset>
+        <label class="check"><input type="checkbox" name="killswitch"> Kill switch: туннель упал — устройства LAN без интернета</label>
+        <label class="check"><input type="checkbox" name="nat"> NAT в туннель (сервер не знает сеть LAN)</label>
+        <p class="hint">NAT нужен для обычного VPN-сервера, где у клиента один адрес. Выключите для site-to-site:
+          тогда центр видит реальные адреса устройств LAN и может к ним подключаться (телефоны, удалённая помощь).</p>
+
+        <h2>Интерфейс (роутер)</h2>
+        <label class="row">PrivateKey <input name="private_key" type="password" autocomplete="off"></label>
+        <div class="toolbar"><button type="button" id="wg-genkey">Сгенерировать ключи</button>
+          <span class="hint">публичный ключ роутера отдайте администратору сервера</span></div>
+        <label class="row">Address <input name="addresses" placeholder="10.8.0.2/32"></label>
+        <label class="row">DNS <input name="dns" placeholder="10.8.0.1"></label>
+        <label class="row">MTU <input name="mtu" type="number" min="1280" max="1500"></label>
+
+        <h2>Сервер (Peer)</h2>
+        <label class="row">PublicKey <input name="peer_public_key"></label>
+        <label class="row">PresharedKey <input name="preshared_key" type="password" autocomplete="off"></label>
+        <label class="row">Endpoint <input name="endpoint" placeholder="vpn.example.com:51820"></label>
+        <label class="row">AllowedIPs (сети компании) <input name="allowed_ips" placeholder="10.0.0.0/8, 192.168.10.0/24"></label>
+        <label class="row">PersistentKeepalive, с <input name="keepalive" type="number" min="0" max="3600"></label>
+
+        <div id="awg-obf" hidden>
+          <h2>Обфускация AmneziaWG</h2>
+          <p class="hint">Параметры Jc, Jmin, Jmax, S1–S4, H1–H4, I1–I5 — по одному «Имя = значение» в строке.
+            Должны совпадать с сервером; при импорте конфига заполняются сами.</p>
+          <textarea name="obfuscation" rows="6" placeholder="Jc = 4&#10;Jmin = 40&#10;Jmax = 70&#10;S1 = 0&#10;S2 = 0&#10;H1 = 1&#10;H2 = 2&#10;H3 = 3&#10;H4 = 4"></textarea>
+        </div>
+
+        <div class="toolbar">
+          <button type="submit">Применить</button>
+          <span id="wg-error" class="error"></span>
+          <span id="wg-ok" class="ok"></span>
+        </div>
+      </form>
+      </div>
+
+      <!-- L2TP/IPsec -->
+      <div id="l2tp-panel" hidden>
+        <div class="card">
+          <div class="status-grid">
+            <div><span class="label">Состояние</span><span id="ls2-state">—</span></div>
+            <div><span class="label">IPsec</span><span id="ls2-ipsec">—</span></div>
+            <div><span class="label">Сервер</span><span id="ls2-server">—</span></div>
+            <div><span class="label">Адрес в туннеле</span><span id="ls2-ip">—</span></div>
+            <div><span class="label">Трафик</span><span id="ls2-traffic">—</span></div>
+          </div>
+          <span id="ls2-error" class="error"></span>
+        </div>
+
+        <form id="l2tp-form" class="card form">
+          <h2>Настройки</h2>
+          <label class="check"><input type="checkbox" name="enabled"> Включить туннель</label>
+          <fieldset class="modes">
+            <label><input type="radio" name="mode" value="full"> Весь трафик через VPN</label>
+            <label><input type="radio" name="mode" value="split"> Только сети компании (split tunnel)</label>
+          </fieldset>
+          <label class="check"><input type="checkbox" name="killswitch"> Kill switch: туннель упал — устройства LAN без интернета</label>
+          <label class="check"><input type="checkbox" name="nat"> NAT в туннель (сервер не знает сеть LAN)</label>
+
+          <h2>Подключение</h2>
+          <label class="row">Сервер <input name="server" placeholder="vpn.example.com"></label>
+          <label class="row">IPsec PSK <input name="psk" type="password" autocomplete="off"></label>
+          <label class="row">Пользователь <input name="username" autocomplete="off"></label>
+          <label class="row">Пароль <input name="password" type="password" autocomplete="off"></label>
+          <label class="row">Сети компании (split) <input name="networks" placeholder="192.168.10.0/24, 10.0.0.0/8"></label>
+          <label class="row">MTU <input name="mtu" type="number" min="1280" max="1460"></label>
+          <p class="hint">L2TP/IPsec (IKEv1, PSK) — для совместимости с серверами MikroTik, Windows, Cisco.
+            Там, где VPN блокируют, используйте AmneziaWG.</p>
+
+          <div class="toolbar">
+            <button type="submit">Применить</button>
+            <span id="l2tp-error" class="error"></span>
+            <span id="l2tp-ok" class="ok"></span>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <!-- Firewall -->
+    <section id="page-firewall" class="page">
+      <h1>Firewall</h1>
+      <p id="fw-zones" class="zones"></p>
+      <div class="tabs" id="fw-tabs">
+        <a class="tab" data-tab="input">Входящие на роутер</a>
+        <a class="tab" data-tab="forward">Транзит</a>
+        <a class="tab" data-tab="forwards">Проброс портов</a>
+        <a class="tab" data-tab="ruleset">Итоговый nftables</a>
+      </div>
+
+      <!-- правила (input / forward) -->
+      <div id="fw-rules-panel">
+        <p class="hint" id="fw-rules-hint"></p>
+        <div class="toolbar">
+          <button type="button" id="fw-add">+ Добавить правило</button>
+          <span id="fw-error" class="error"></span>
+        </div>
+
+        <form id="fw-form" class="card form oci" hidden>
+          <h2 id="fw-form-title">Новое правило</h2>
+          <div class="grid2">
+            <label>Действие
+              <select name="action">
+                <option value="accept">Разрешить (accept)</option>
+                <option value="drop">Запретить молча (drop)</option>
+                <option value="reject">Отклонить с ответом (reject)</option>
+              </select></label>
+            <label>Протокол
+              <select name="protocol">
+                <option value="all">Все</option><option value="tcp">TCP</option>
+                <option value="udp">UDP</option><option value="icmp">ICMP</option>
+              </select></label>
+            <label>Откуда (интерфейс)
+              <select name="in_zone">
+                <option value="any">Любой</option><option value="wan">WAN</option>
+                <option value="lan">LAN</option><option value="vpn">VPN</option>
+              </select></label>
+            <label>Источник CIDR <input name="src" placeholder="0.0.0.0/0"></label>
+            <label class="fwd-only">Куда (интерфейс)
+              <select name="out_zone">
+                <option value="any">Любой</option><option value="wan">WAN</option>
+                <option value="lan">LAN</option><option value="vpn">VPN</option>
+              </select></label>
+            <label class="fwd-only">Назначение CIDR <input name="dst" placeholder="0.0.0.0/0"></label>
+            <label class="ports">Порты источника <input name="src_ports" placeholder="Все"></label>
+            <label class="ports">Порты назначения <input name="dst_ports" placeholder="22 · 80, 443 · 5060-5070"></label>
+          </div>
+          <label class="row wide-row">Описание <input name="description" maxlength="120"></label>
+          <label class="check"><input type="checkbox" name="enabled" checked> Правило включено</label>
+          <div class="toolbar">
+            <button type="submit" id="fw-save">Добавить</button>
+            <button type="button" id="fw-cancel">Отмена</button>
+          </div>
+        </form>
+
+        <table class="compact fw-table">
+          <thead><tr><th>#</th><th>Действие</th><th>Откуда</th><th>Источник</th><th class="fwd-col">Куда</th>
+            <th class="fwd-col">Назначение</th><th>Протокол</th><th>Порты ист.</th><th>Порты назн.</th>
+            <th>Описание</th><th>Срабатывания</th><th></th></tr></thead>
+          <tbody id="fw-rules"></tbody>
+        </table>
+
+        <div class="card system-rules">
+          <h2>Системные правила (автоматически, после ваших)</h2>
+          <ul id="fw-system"></ul>
+        </div>
+      </div>
+
+      <!-- проброс портов -->
+      <div id="fw-forwards-panel" hidden>
+        <p class="hint">Порт на WAN-адресе роутера → устройство в LAN. Ответы устройства идут обратно автоматически.
+          В режиме VPN «весь трафик» проброс с WAN работать не будет — ответы уйдут в туннель.</p>
+        <div class="toolbar">
+          <button type="button" id="pf-add">+ Добавить проброс</button>
+          <span id="pf-error" class="error"></span>
+        </div>
+        <form id="pf-form" class="card form oci" hidden>
+          <h2 id="pf-form-title">Новый проброс</h2>
+          <div class="grid2">
+            <label>Протокол
+              <select name="protocol"><option value="tcp">TCP</option><option value="udp">UDP</option>
+                <option value="tcp+udp">TCP и UDP</option></select></label>
+            <label>Порт WAN <input name="wan_port" placeholder="8080 или 5060-5070" required></label>
+            <label>IP устройства в LAN <input name="to_ip" placeholder="192.168.88.20" required></label>
+            <label>Порт устройства <input name="to_port" type="number" min="1" max="65535" placeholder="тот же"></label>
+            <label>Разрешённые источники CIDR <input name="src" placeholder="все (0.0.0.0/0)"></label>
+          </div>
+          <label class="row wide-row">Описание <input name="description" maxlength="120"></label>
+          <label class="check"><input type="checkbox" name="enabled" checked> Проброс включён</label>
+          <div class="toolbar">
+            <button type="submit" id="pf-save">Добавить</button>
+            <button type="button" id="pf-cancel">Отмена</button>
+          </div>
+        </form>
+        <table class="compact fw-table">
+          <thead><tr><th>#</th><th>Протокол</th><th>Порт WAN</th><th>→ Устройство</th><th>Порт</th>
+            <th>Источник</th><th>Описание</th><th>Срабатывания</th><th></th></tr></thead>
+          <tbody id="pf-list"></tbody>
+        </table>
+      </div>
+
+      <!-- итоговый ruleset -->
+      <div id="fw-ruleset-panel" hidden>
+        <p class="hint">Так выглядит таблица <code>inet outpost_gate_pro</code>, которую роутер собирает из ваших
+          и системных правил и применяет атомарно командой <code>nft -f</code>.</p>
+        <pre id="fw-ruleset" class="code"></pre>
+      </div>
+    </section>
+
+    <!-- Routing: OSPF и BGP (FRRouting) -->
+    <section id="page-routing" class="page">
+      <h1>Routing</h1>
+      <div class="tabs" id="rt-tabs">
+        <a class="tab" data-tab="overview">Соседи и маршруты</a>
+        <a class="tab" data-tab="ospf">OSPF</a>
+        <a class="tab" data-tab="bgp">BGP</a>
+      </div>
+
+      <div id="rt-overview">
+        <div class="card">
+          <div class="status-grid">
+            <div><span class="label">FRRouting</span><span id="rt-state">—</span></div>
+            <div><span class="label">Router ID</span><span id="rt-rid">—</span></div>
+            <div><span class="label">OSPF</span><span id="rt-ospf-state">—</span></div>
+            <div><span class="label">BGP</span><span id="rt-bgp-state">—</span></div>
+          </div>
+          <span id="rt-error" class="error"></span>
+        </div>
+        <div class="card wide">
+          <h2>Соседи OSPF</h2>
+          <table class="compact">
+            <thead><tr><th>Router ID</th><th>Адрес</th><th>Интерфейс</th><th>Состояние</th><th>Приоритет</th><th>Аптайм</th></tr></thead>
+            <tbody id="rt-ospf-nb"></tbody>
+          </table>
+        </div>
+        <div class="card wide">
+          <h2>Соседи BGP</h2>
+          <table class="compact">
+            <thead><tr><th>Адрес</th><th>AS</th><th>Описание</th><th>Состояние</th><th>Аптайм</th><th>Получено</th><th>Отправлено</th></tr></thead>
+            <tbody id="rt-bgp-nb"></tbody>
+          </table>
+        </div>
+        <div class="card wide">
+          <h2>Маршруты от OSPF и BGP</h2>
+          <table class="compact">
+            <thead><tr><th>Сеть</th><th>Протокол</th><th>Шлюз</th><th>Интерфейс</th><th>Distance</th><th>Метрика</th><th>Активен</th></tr></thead>
+            <tbody id="rt-routes"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <form id="ospf-form" class="card form wide rt-form" hidden>
+        <h2>OSPF</h2>
+        <label class="check"><input type="checkbox" name="enabled"> Включить OSPF</label>
+        <label class="row">Router ID (общий для OSPF и BGP) <input name="router_id" placeholder="10.255.0.1"></label>
+        <p class="hint">Пусто — FRR выберет сам (наибольший адрес роутера). Лучше задать явно: так проще читать таблицы соседей.</p>
+
+        <h3>Сети</h3>
+        <p class="hint">Интерфейсы, адреса которых попадают в эти сети, участвуют в OSPF и объявляются соседям.</p>
+        <table class="compact edit-table">
+          <thead><tr><th>Сеть</th><th>Область (area)</th><th></th></tr></thead>
+          <tbody id="ospf-nets"></tbody>
+        </table>
+        <button type="button" class="link" data-add="ospf-net">+ Добавить сеть</button>
+
+        <h3>Интерфейсы</h3>
+        <p class="hint">Необязательно: стоимость, тип сети, таймеры и пароль для отдельных интерфейсов. Через VPN-туннель — тип point-to-point.</p>
+        <table class="compact edit-table">
+          <thead><tr><th>Интерфейс</th><th>Стоимость</th><th>Тип сети</th><th>Пассивный</th><th>Hello, с</th><th>Dead, с</th><th>Ключ MD5</th><th>Сосед (unicast)</th><th></th></tr></thead>
+          <tbody id="ospf-ifaces"></tbody>
+        </table>
+        <button type="button" class="link" data-add="ospf-iface">+ Добавить интерфейс</button>
+        <datalist id="rt-ifnames"></datalist>
+
+        <h3>Дополнительно</h3>
+        <label class="check"><input type="checkbox" name="passive_default"> Все интерфейсы пассивные, кроме отмеченных активными</label>
+        <div class="row-block"><span>Передавать в OSPF (redistribute)</span>
+          <div class="port-list">
+            <label class="check"><input type="checkbox" name="redistribute" value="connected"> connected</label>
+            <label class="check"><input type="checkbox" name="redistribute" value="static"> static</label>
+            <label class="check"><input type="checkbox" name="redistribute" value="kernel"> kernel</label>
+            <label class="check"><input type="checkbox" name="redistribute" value="bgp"> bgp</label>
+          </div>
+        </div>
+        <label class="row">Маршрут по умолчанию
+          <select name="default_route">
+            <option value="none">Не раздавать</option>
+            <option value="if-installed">Раздавать, если он есть у роутера</option>
+            <option value="always">Раздавать всегда</option>
+          </select>
+        </label>
+        <div class="toolbar">
+          <button type="submit">Применить</button>
+          <span class="error rt-form-error"></span>
+          <span class="ok rt-form-ok"></span>
+        </div>
+      </form>
+
+      <form id="bgp-form" class="card form wide rt-form" hidden>
+        <h2>BGP</h2>
+        <label class="check"><input type="checkbox" name="enabled"> Включить BGP</label>
+        <label class="row">Номер AS роутера <input name="asn" type="number" min="1" max="4294967295" placeholder="65001"></label>
+        <label class="row">Router ID (общий для OSPF и BGP) <input name="router_id" placeholder="10.255.0.1"></label>
+        <label class="row wide-row">Объявлять сети <input name="networks" placeholder="192.168.88.0/24, 10.20.0.0/16"></label>
+        <p class="hint">Сеть объявляется, только если она есть в таблице маршрутизации роутера (например, сеть LAN).</p>
+        <div class="row-block"><span>Передавать в BGP (redistribute)</span>
+          <div class="port-list">
+            <label class="check"><input type="checkbox" name="redistribute" value="connected"> connected</label>
+            <label class="check"><input type="checkbox" name="redistribute" value="static"> static</label>
+            <label class="check"><input type="checkbox" name="redistribute" value="kernel"> kernel</label>
+            <label class="check"><input type="checkbox" name="redistribute" value="ospf"> ospf</label>
+          </div>
+        </div>
+
+        <h3>Соседи</h3>
+        <div id="bgp-neighbors"></div>
+        <button type="button" class="link" data-add="bgp-nb">+ Добавить соседа</button>
+        <p class="hint">Фильтры — сети через запятую, можно с ge/le: 10.0.0.0/8 le 24. Пусто — без фильтра. Маршруты eBGP принимаются и отдаются без отдельной политики.</p>
+
+        <div class="toolbar">
+          <button type="submit">Применить</button>
+          <span class="error rt-form-error"></span>
+          <span class="ok rt-form-ok"></span>
+        </div>
+      </form>
+    </section>
+
+    <!-- Tools -->
+    <section id="page-tools" class="page">
+      <h1>Tools</h1>
+      <div class="tabs" id="tool-tabs">
+        <a class="tab" data-tool="ping">Ping</a>
+        <a class="tab" data-tool="port_scan">Сканер портов</a>
+        <a class="tab" data-tool="traceroute">Traceroute</a>
+        <a class="tab" data-tool="dns">DNS</a>
+        <a class="tab" data-tool="neighbors">Соседи (ARP)</a>
+        <a class="tab" data-tool="scan">Сканер сети</a>
+      </div>
+
+      <form id="tool-form" class="card tool-form">
+        <p class="hint" id="tool-hint"></p>
+        <div class="tool-fields">
+          <label data-f="host">Адрес или имя <input name="host" placeholder="8.8.8.8 или example.com"></label>
+          <label data-f="family" class="seg">Протокол
+            <span class="segmented"><label><input type="radio" name="family" value="4" checked> IPv4</label>
+              <label><input type="radio" name="family" value="6"> IPv6</label></span></label>
+          <label data-f="count">Количество <input name="count" type="number" min="1" max="100" value="4"></label>
+          <label data-f="ports">Порты <input name="ports" placeholder="22, 80, 443 или 1-1024" value="22, 80, 443, 8000, 8291"></label>
+          <label data-f="max_hops">Макс. хопов <input name="max_hops" type="number" min="1" max="64" value="30"></label>
+          <label data-f="network">Сеть <input name="network" placeholder="192.168.88.0/24"></label>
+          <label data-f="interface">Интерфейс <select name="interface"></select></label>
+        </div>
+        <div class="toolbar">
+          <button type="submit" id="tool-start">Старт</button>
+          <button type="button" id="tool-stop" disabled>Стоп</button>
+          <span id="tool-status" class="hint"></span>
+          <span id="tool-error" class="error"></span>
+        </div>
+      </form>
+
+      <div id="tool-summary" class="summary" hidden></div>
+      <div class="card wide tool-result">
+        <table class="compact">
+          <thead id="tool-head"></thead>
+          <tbody id="tool-rows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- System -->
+    <section id="page-system" class="page">
+      <h1>System</h1>
+      <div class="tabs" id="sys-tabs">
+        <a class="tab" data-tab="overview">Обзор</a>
+        <a class="tab" data-tab="users">Пользователи</a>
+        <a class="tab" data-tab="backup">Резервные копии</a>
+        <a class="tab" data-tab="audit">Журнал</a>
+      </div>
+
+      <div data-panel="overview">
+        <div class="tiles" id="sys-tiles"></div>
+        <div class="card">
+          <div class="status-grid" id="sys-info"></div>
+        </div>
+        <form id="identity-form" class="card form">
+          <h2>Имя роутера (Identity)</h2>
+          <div class="toolbar"><input name="identity" maxlength="48" required>
+            <button type="submit">Сохранить</button><span id="identity-msg" class="ok"></span></div>
+        </form>
+        <div class="card">
+          <h2>Safe Mode</h2>
+          <p class="hint">Перед рискованными изменениями (фаервол, WAN, VPN) включите Safe Mode: если связь с роутером пропадёт
+            дольше заданного времени, он сам вернёт прежнюю конфигурацию. Кнопка — и в левом меню.</p>
+          <div class="toolbar">Откат, если нет связи <input id="safe-timeout" type="number" min="15" max="900" value="60" class="narrow"> с
+            <button type="button" id="safe-start2">Включить Safe Mode</button></div>
+        </div>
+        <div class="card">
+          <h2>Перезапуск</h2>
+          <p class="hint">Перезапускает сервис роутера (DHCP, VPN и правила применятся заново). Docker поднимет контейнер сам.</p>
+          <button type="button" id="restart-btn" class="danger">Перезапустить сервис</button>
+          <span id="restart-msg" class="hint"></span>
+        </div>
+      </div>
+
+      <div data-panel="users" hidden>
+        <div class="card wide">
+          <table class="compact"><thead><tr><th>Пользователь</th><th>Роль</th><th>Пароль</th><th></th></tr></thead>
+            <tbody id="users"></tbody></table>
+        </div>
+        <form id="user-form" class="card form">
+          <h2>Новый пользователь</h2>
+          <div class="toolbar">
+            <input name="name" placeholder="имя (латиница)" required>
+            <input name="password" type="password" placeholder="временный пароль" minlength="8" required autocomplete="new-password">
+            <select name="role"><option value="full">Полные права</option><option value="read">Только просмотр</option></select>
+            <button type="submit">Добавить</button>
+            <span id="user-error" class="error"></span>
+          </div>
+          <p class="hint">Новый пользователь сменит пароль при первом входе. Свой пароль — кнопка «Сменить пароль» у своей строки.</p>
+        </form>
+      </div>
+
+      <div data-panel="backup" hidden>
+        <div class="card">
+          <h2>Резервная копия</h2>
+          <p class="hint">Весь <code>router.yaml</code> одним файлом. В нём ключи VPN и пароли L2TP — храните копию надёжно.
+            Пользователи веб-интерфейса в копию не входят.</p>
+          <div class="toolbar">
+            <a class="button" href="/api/system/backup">⬇ Скачать копию</a>
+            <input type="file" id="restore-file" accept=".yaml,.yml,text/yaml">
+            <button type="button" id="restore-btn">Восстановить из файла</button>
+            <span id="restore-msg" class="ok"></span><span id="restore-error" class="error"></span>
+          </div>
+        </div>
+        <div class="card wide">
+          <h2>Автоматические снимки</h2>
+          <p class="hint">Перед каждым изменением роутер сохраняет предыдущую версию конфигурации (последние 50).</p>
+          <table class="compact"><thead><tr><th>Время</th><th>Размер</th><th></th></tr></thead>
+            <tbody id="snapshots"></tbody></table>
+        </div>
+      </div>
+
+      <div data-panel="audit" hidden>
+        <div class="card wide">
+          <p class="hint">Кто, когда и что менял: все изменения через веб и API, входы в систему, откаты Safe Mode.</p>
+          <table class="compact"><thead><tr><th>Время</th><th>Пользователь</th><th>Действие</th><th>Что</th><th>Результат</th><th>IP</th></tr></thead>
+            <tbody id="audit"></tbody></table>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="js/i18n-dict.js?v=0.12.0"></script>
+  <script src="js/i18n.js?v=0.12.0"></script>
+  <script src="js/app.js?v=0.12.0"></script>
+</body>
+</html>

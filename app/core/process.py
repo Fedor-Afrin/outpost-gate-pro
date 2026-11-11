@@ -1,0 +1,34 @@
+"""Долгоживущие фоновые процессы (amneziawg-go, charon, xl2tpd), которыми управляет роутер."""
+from __future__ import annotations
+
+import subprocess
+import threading
+
+
+class ManagedProcess:
+    def __init__(self, name: str):
+        self.name = name
+        self._proc: subprocess.Popen | None = None
+        self._lock = threading.Lock()
+
+    def running(self) -> bool:
+        return self._proc is not None and self._proc.poll() is None
+
+    def start(self, cmd: list[str], env: dict | None = None) -> None:
+        with self._lock:
+            if self.running():
+                return
+            self._proc = subprocess.Popen(cmd, env=env)   # вывод — в docker logs
+            print(f"[proc] {self.name} запущен (pid {self._proc.pid})")
+
+    def stop(self, timeout: float = 5.0) -> None:
+        with self._lock:
+            if self.running():
+                self._proc.terminate()
+                try:
+                    self._proc.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    self._proc.kill()
+                    self._proc.wait()
+                print(f"[proc] {self.name} остановлен")
+            self._proc = None
