@@ -1,0 +1,26 @@
+# Режим HOST: контейнер управляет сетью СЕРВЕРА.
+# !!! НЕ запускать на рабочем компьютере — только на VM / выделенном сервере !!!
+#
+# Перед запуском:
+#   sudo cp daemon.json.example /etc/docker/daemon.json && sudo systemctl restart docker
+#   docker compose up -d --build
+services:
+  router:
+    build: ../..
+    image: outpost-gate-pro:latest
+    container_name: outpost-gate-pro
+    restart: unless-stopped
+    network_mode: host          # реальные интерфейсы сервера
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    device_cgroup_rules:
+      - "c 108:0 rwm"    # /dev/ppp для L2TP (на хосте: sudo modprobe ppp_generic)
+    environment:
+      ROUTER_MODE: host
+      API_HOST: 0.0.0.0         # слушать все адреса; доступ с WAN закрывает фаервол (галочка в LAN)
+      API_PORT: "8000"
+      CLI_SSH_PORT: "2222"      # SSH -> CLI роутера; порт 22 оставлен SSH самого сервера
+    volumes:
+      - /etc/outpost-gate-pro:/etc/outpost-gate-pro
+      - /var/lib/outpost-gate-pro:/var/lib/outpost-gate-pro
