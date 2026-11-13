@@ -12,7 +12,9 @@
   DELETE /api/lan/static-leases/{mac}   открепить
 Пулы, опции DHCP и закреплённые адреса по сегментам — /api/dhcp.
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException
+from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
 
 from app.models.lan import LanConfig, LanStatus, SegmentStatus, StaticLease, StaticLeaseView
 from app.services import lan as svc
@@ -24,13 +26,24 @@ def _http(e: svc.LanError) -> HTTPException:
     return HTTPException(status_code=e.status, detail=e.message)
 
 
+def _coerce(seg_id: str, raw: dict) -> LanConfig:
+    """Тело PUT: при смене сети диапазон DHCP из старой сети переезжает в новую, а не даёт ошибку."""
+    try:
+        return svc.coerce(seg_id, raw)
+    except svc.LanError as e:
+        raise _http(e)
+    except ValidationError as e:
+        raise RequestValidationError(e.errors(include_url=False, include_context=False))
+
+
 @router.get("", response_model=LanStatus)
 def get_lan():
     return svc.status()
 
 
 @router.put("", response_model=LanStatus)
-def set_lan(data: LanConfig):
+def set_lan(raw: dict = Body(...)):
+    data = _coerce("lan1", raw)
     try:
         return svc.update(data)
     except svc.LanError as e:
@@ -51,7 +64,8 @@ def add_segment(data: LanConfig):
 
 
 @router.put("/segments/{seg_id}", response_model=list[SegmentStatus])
-def update_segment(seg_id: str, data: LanConfig):
+def update_segment(seg_id: str, raw: dict = Body(...)):
+    data = _coerce(seg_id, raw)
     try:
         return svc.update_segment(seg_id, data)
     except svc.LanError as e:

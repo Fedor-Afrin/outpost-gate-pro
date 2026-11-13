@@ -133,6 +133,12 @@ window.I18N_DICT = {
      "במצב DHCP אפשר להשאיר את שדות ה-DNS ריקים — אז ישמשו שרתי ה-DNS של הספק."],
   "Применить": ["Apply", "החל"],
   "Применено": ["Applied", "הוחל"],
+  "Применено: сеть изменена, диапазон DHCP и закреплённые адреса перенесены в новую сеть":
+    ["Applied: the network changed, the DHCP range and pinned addresses were moved to the new network",
+     "הוחל: הרשת השתנתה, טווח ה-DHCP והכתובות הקבועות הועברו לרשת החדשה"],
+  "Основной сегмент не удаляется — его можно изменить или выключить.":
+    ["The main segment cannot be deleted — you can edit or disable it.",
+     "לא ניתן למחוק את המקטע הראשי — אפשר לערוך או לכבות אותו."],
   "адрес получен по DHCP": ["address obtained via DHCP", "הכתובת התקבלה דרך DHCP"],
   "ищу DHCP-сервер…": ["looking for a DHCP server…", "מחפש שרת DHCP…"],
   "настроен вручную": ["configured manually", "הוגדר ידנית"],

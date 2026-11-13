@@ -2,6 +2,7 @@
 Тесты LAN без ядра, nft и dnsmasq: всё системное подменяется.
 Сценарий как в dev-режиме: WAN = eth1 (default от Docker), свободный порт eth0 с адресом Docker.
 """
+import ipaddress
 import pytest
 import yaml
 
@@ -308,3 +309,49 @@ def test_wan_on_provider_vlan(env, monkeypatch):
     wan.cleanup(wan.load_state())
     assert "eth1.100" not in kernel.links
     assert WanConfig(interface="eth1", mode="dhcp", vlan_id=100).to_yaml()["vlan_id"] == 100
+
+
+def test_change_network_moves_pool_and_static(env):
+    """Смена адреса LAN: старый пул из формы и закреплённые адреса переезжают в новую сеть."""
+    store, _, calls = env
+    from app.models.lan import StaticLease
+    lan.update(LanConfig(enabled=True, pool_start="192.168.88.100", pool_end="192.168.88.200",
+                         dhcp_options={"dns_servers": ["192.168.88.1", "8.8.8.8"], "ntp_servers": ["192.168.88.1"]}))
+    lan.add_static(StaticLease(mac="00:0b:82:aa:bb:cc", ip="192.168.88.5", name="phone"))
+    lan.add_static(StaticLease(mac="00:0b:82:aa:bb:cd", ip="192.168.88.20", name="pc"))
+
+    raw = lan.get_segment("lan1").model_dump()                     # так присылает веб: пул — старый
+    raw["address"] = "192.168.1.1/24"
+    with pytest.raises(ValueError):
+        LanConfig.model_validate(raw)                              # раньше — ошибка «вне сети»
+    new = lan.coerce("lan1", raw)
+    assert (new.pool_start, new.pool_end) == ("192.168.1.100", "192.168.1.200")
+    assert new.dhcp_options.dns_servers == ["192.168.1.1", "8.8.8.8"]
+    assert new.dhcp_options.ntp_servers == ["192.168.1.1"]
+    lan.update(new)
+    y = store.load()["lan"]
+    assert [x["ip"] for x in y["dhcp-server"]["static-leases"]] == ["192.168.1.5", "192.168.1.20"]
+    assert all(v.valid for v in lan.static_view())
+
+
+def test_change_network_smaller_prefix(env):
+    """Новая сеть меньше: диапазон не помещается — по умолчанию; адрес на месте роутера не переносится."""
+    store, _, _ = env
+    from app.models.lan import StaticLease
+    lan.update(LanConfig(enabled=True, pool_start="192.168.88.100", pool_end="192.168.88.250"))
+    lan.add_static(StaticLease(mac="00:0b:82:aa:bb:cc", ip="192.168.88.10", name="a"))
+    raw = lan.get_segment("lan1").model_dump()
+    raw["address"] = "10.10.0.10/27"
+    new = lan.coerce("lan1", raw)
+    assert new.pool_start and ipaddress.ip_address(new.pool_start) in new.network
+    assert (new.pool_start, new.pool_end) == ("10.10.0.11", "10.10.0.30")
+    lan.update(new)
+    assert store.load()["lan"]["dhcp-server"]["static-leases"][0]["ip"] == "192.168.88.10"   # совпал бы с роутером
+
+
+def test_same_network_keeps_pool(env):
+    lan.update(LanConfig(enabled=True, pool_start="192.168.88.100", pool_end="192.168.88.200"))
+    raw = lan.get_segment("lan1").model_dump()
+    raw["address"] = "192.168.88.254/24"
+    new = lan.coerce("lan1", raw)
+    assert (new.pool_start, new.pool_end) == ("192.168.88.100", "192.168.88.200")

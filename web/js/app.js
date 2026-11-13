@@ -379,6 +379,7 @@ function fillLanForm() {
   $("#lan-wan-block").hidden = !primary;
   f.wan_management.checked = c.wan_management;
   $("#lan-delete").hidden = primary || lanSeg === "new";
+  $("#lan-main-hint").hidden = !primary;
   lanPortsAutoChanged();
   lanFormFor = lanSeg;
 }
@@ -413,6 +414,14 @@ $("#lan-tabs").addEventListener("click", (ev) => {
 
 $("#lan-form").addEventListener("change", (ev) => { if (ev.target.name === "ports_auto") lanPortsAutoChanged(); });
 
+function ipNet(cidr) {
+  const m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)\/(\d+)$/.exec((cidr || "").trim());
+  if (!m) return null;
+  const ip = ((+m[1] << 24) | (+m[2] << 16) | (+m[3] << 8) | +m[4]) >>> 0;
+  const bits = +m[5], mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
+  return `${(ip & mask) >>> 0}/${bits}`;
+}
+
 $("#lan-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const f = ev.target;
@@ -437,7 +446,10 @@ $("#lan-form").addEventListener("submit", async (ev) => {
       await api("PUT", `/api/lan/segments/${lanSeg}`, body);
     }
     lanFormFor = null;
-    $("#lan-ok").textContent = "Применено";
+    const moved = seg && ipNet(base.address) !== ipNet(body.address);
+    $("#lan-ok").textContent = moved
+      ? I18N.t("Применено: сеть изменена, диапазон DHCP и закреплённые адреса перенесены в новую сеть")
+      : "Применено";
     await loadLan();
   } catch (e) { $("#lan-error").textContent = e.message; }
 });
