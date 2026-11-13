@@ -227,14 +227,14 @@ def refresh_endpoint_route() -> None:
 
 def _check_networks(networks: list[str]) -> None:
     from app.services import lan
-    lan_cfg = lan.get_config()
-    if not lan_cfg.enabled:
-        return
-    lan_net = ipaddress.ip_interface(lan_cfg.address).network
-    for n in networks:
-        if ipaddress.ip_network(n).overlaps(lan_net):
-            raise VpnError(400, f"сеть {n} пересекается с LAN {lan_net}: у каждого роутера "
-                                f"должна быть своя подсеть LAN")
+    for seg in lan.segments():
+        if not seg.enabled:
+            continue
+        lan_net = seg.network
+        for n in networks:
+            if ipaddress.ip_network(n).overlaps(lan_net):
+                raise VpnError(400, f"сеть {n} пересекается с LAN {lan_net}: у каждого роутера "
+                                    f"должна быть своя подсеть LAN")
 
 
 # --- WireGuard / AmneziaWG ---------------------------------------------------------------------

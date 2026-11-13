@@ -182,86 +182,166 @@ $("#wan-renew").addEventListener("click", async () => {
   catch (e) { $("#wan-error").textContent = e.message; }
 });
 
-// ---------------------------------------------------------------- LAN
+// ---------------------------------------------------------------- LAN: сегменты
 const ROLE = { wan: '<span class="badge wan">WAN</span>', lan: '<span class="badge lan">LAN</span>', none: "—" };
-let lanFormLoaded = false;
+let lanSeg = "lan1";            // выбранный сегмент; "new" — добавление
+let lanFormFor = null;          // для какого сегмента заполнена форма (опрос не трогает ввод)
+let lanData = null;
+const csv = (a) => (a || []).join(", ");
+const items = (s) => s.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
+const segName = (id) => (lanData?.segments.find((s) => s.config.id === id)?.config.name) || id;
 
-function lanPortsAutoChanged() {
-  const auto = $("#lan-form").ports_auto.checked;
-  $("#lan-port-list").querySelectorAll("input").forEach((i) => { i.disabled = auto; });
+function segTabs(box, current, segs, withNew) {
+  $(box).innerHTML = segs.map((s) => `<a class="tab ${s.id === current ? "active" : ""}" data-seg="${esc(s.id)}">${esc(s.name)}</a>`).join("")
+    + (withNew ? `<a class="tab ${current === "new" ? "active" : ""}" data-seg="new">+ Сегмент</a>` : "");
 }
 
-function fillLanForm(l) {
+function lanPortsAutoChanged() {
   const f = $("#lan-form");
-  const c = l.config;
+  const auto = lanSeg === "lan1" && f.ports_auto.checked;
+  $("#lan-port-list").querySelectorAll("input").forEach((i) => { if (!i.dataset.busy) i.disabled = auto; });
+}
+
+function newSegmentConfig(n) {
+  const third = 88 + n;
+  return { id: "new", name: `LAN${n + 1}`, enabled: true, address: `192.168.${third}.1/24`, ports: [], dns_enabled: true,
+           domain: lanData?.segments[0]?.config.domain || "office.lan", forward_to: [], dhcp_enabled: true,
+           pool_start: null, pool_end: null, lease_time: "12h", wan_management: true, dhcp_options: {} };
+}
+
+function fillLanForm() {
+  const f = $("#lan-form");
+  const segs = lanData.segments;
+  const seg = segs.find((s) => s.config.id === lanSeg);
+  const c = seg ? seg.config : newSegmentConfig(segs.length);
+  const primary = lanSeg === "lan1";
+  $("#lan-form-title").textContent = lanSeg === "new" ? "Новый сегмент" : "Настройки";
   f.enabled.checked = c.enabled;
+  f.name.value = c.name;
   f.address.value = c.address;
-  f.ports_auto.checked = c.ports.length === 0;
-  const candidates = l.ports.filter((p) => p.role !== "wan");
-  $("#lan-port-list").innerHTML = candidates.map((p) => `
-    <label class="check"><input type="checkbox" name="port" value="${esc(p.name)}"
-      ${c.ports.length === 0 || c.ports.includes(p.name) ? "checked" : ""}> ${esc(p.name)}</label>`).join("")
-    || '<span class="hint">нет свободных портов</span>';
-  f.dhcp_enabled.checked = c.dhcp_enabled;
-  f.pool_start.value = c.pool_start ?? "";
-  f.pool_end.value = c.pool_end ?? "";
-  f.lease_time.value = c.lease_time;
-  if (!f.lease_time.value) f.lease_time.add(new Option(c.lease_time, c.lease_time, true, true));
+  $("#lan-auto-label").hidden = !primary;
+  f.ports_auto.checked = primary && c.ports.length === 0;
+  // порты: свободные, свои и занятые другими сегментами (их нельзя выбрать)
+  const owner = {};
+  lanData.ports.forEach((p) => { if (p.segment) owner[p.name] = p.segment; });
+  segs.forEach((s) => (s.config.ports || []).forEach((p) => { if (s.config.id !== "lan1") owner[p] = s.config.id; }));
+  $("#lan-port-list").innerHTML = lanData.ports.filter((p) => p.role !== "wan").map((p) => {
+    const other = owner[p.name] && owner[p.name] !== lanSeg && !(primary && owner[p.name] === "lan1");
+    const busy = other && owner[p.name] !== "lan1";
+    const mine = c.ports.includes(p.name) || (primary && c.ports.length === 0 && !busy);
+    return `<label class="check"><input type="checkbox" name="port" value="${esc(p.name)}" ${mine ? "checked" : ""}
+      ${busy ? 'disabled data-busy="1"' : ""}> ${esc(p.name)}${busy ? ` <span class="hint">(${esc(segName(owner[p.name]))})</span>` : ""}</label>`;
+  }).join("") || '<span class="hint">нет свободных портов</span>';
+  f.dns_enabled.checked = c.dns_enabled;
+  f.domain.value = c.domain ?? "";
+  $("#lan-forward").innerHTML = segs.filter((s) => s.config.id !== lanSeg).map((s) => `
+    <label class="check"><input type="checkbox" name="forward_to" value="${esc(s.config.id)}"
+      ${c.forward_to.includes(s.config.id) ? "checked" : ""}> → ${esc(s.config.name)} (${esc(s.config.address)})</label>`).join("")
+    || '<span class="hint">других сегментов нет</span>';
+  $("#lan-wan-block").hidden = !primary;
   f.wan_management.checked = c.wan_management;
+  $("#lan-delete").hidden = primary || lanSeg === "new";
   lanPortsAutoChanged();
+  lanFormFor = lanSeg;
 }
 
 async function loadLan() {
   const l = await api("GET", "/api/lan");
-  $("#ls-state").innerHTML = l.active ? '<span class="flag-r">работает</span>'
-    : (l.config.enabled ? '<span class="flag-x">ошибка — см. docker logs</span>' : "выключен");
-  $("#ls-dns").textContent = l.dns_dhcp_running ? "dnsmasq работает" : "не запущен";
-  $("#ls-bridge").textContent = l.active ? l.bridge : "—";
-  $("#ls-addr").textContent = l.active ? l.config.address : "—";
+  lanData = l;
+  if (lanSeg !== "new" && !l.segments.some((s) => s.config.id === lanSeg)) lanSeg = "lan1";
+  segTabs("#lan-tabs", lanSeg, l.segments.map((s) => s.config), true);
+  const seg = l.segments.find((s) => s.config.id === lanSeg);
+  $("#ls-state").innerHTML = !seg ? "—" : seg.active ? '<span class="flag-r">работает</span>'
+    : (seg.config.enabled ? '<span class="flag-x">ошибка — см. docker logs</span>' : "выключен");
+  $("#ls-bridge").textContent = seg ? seg.bridge : "—";
+  $("#ls-addr").textContent = seg && seg.active ? seg.config.address : "—";
+  $("#ls-clients").textContent = seg ? seg.clients : "—";
   $("#lan-ports").innerHTML = l.ports.map((p) => `
-    <tr><td>${esc(p.name)}</td><td>${ROLE[p.role]}</td>
+    <tr><td>${esc(p.name)}</td><td>${ROLE[p.role]}</td><td>${p.segment ? esc(segName(p.segment)) : "—"}</td>
         <td>${p.link_up ? '<span class="flag-r">есть</span>' : '<span class="flag-x">нет</span>'}</td>
         <td>${esc(p.mac)}</td></tr>`).join("");
-  $("#lan-leases").innerHTML = l.leases.map((d) => `
-    <tr><td>${esc(d.name ?? d.hostname ?? "—")}</td><td>${esc(d.ip)}</td><td>${esc(d.mac)}</td>
-        <td>${esc(d.vendor ?? "—")}</td>
-        <td>${d.expires ? new Date(d.expires * 1000).toLocaleString(I18N.locale()) : "бессрочно"}</td>
-        <td class="actions">${d.static ? '<span class="badge lan">закреплён</span>'
-          : `<button type="button" data-pin="${esc(d.mac)}" data-ip="${esc(d.ip)}" data-name="${esc(d.hostname ?? "")}">Закрепить</button>`}</td></tr>`).join("")
-    || '<tr><td colspan="6" class="hint">пока никого</td></tr>';
-  renderStatic(l.static_leases);
-  if (!lanFormLoaded) { fillLanForm(l); lanFormLoaded = true; }
+  if (lanFormFor !== lanSeg) fillLanForm();
 }
+
+$("#lan-tabs").addEventListener("click", (ev) => {
+  const t = ev.target.closest(".tab");
+  if (!t) return;
+  lanSeg = t.dataset.seg;
+  lanFormFor = null;
+  $("#lan-error").textContent = ""; $("#lan-ok").textContent = "";
+  loadLan().catch(console.error);
+});
 
 $("#lan-form").addEventListener("change", (ev) => { if (ev.target.name === "ports_auto") lanPortsAutoChanged(); });
 
 $("#lan-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const f = ev.target;
-  $("#lan-error").textContent = "";
-  $("#lan-ok").textContent = "";
-  const ports = f.ports_auto.checked ? []
-    : [...f.querySelectorAll("input[name=port]:checked")].map((i) => i.value);
+  $("#lan-error").textContent = ""; $("#lan-ok").textContent = "";
+  const seg = lanData.segments.find((s) => s.config.id === lanSeg);
+  const base = seg ? seg.config : newSegmentConfig(lanData.segments.length);
+  const ports = lanSeg === "lan1" && f.ports_auto.checked ? []
+    : [...f.querySelectorAll("input[name=port]:checked:not(:disabled)")].map((i) => i.value);
+  const body = { ...base, id: lanSeg === "new" ? "lan2" : lanSeg, enabled: f.enabled.checked, name: f.name.value.trim(),
+    address: f.address.value.trim(), ports, dns_enabled: f.dns_enabled.checked, domain: f.domain.value.trim() || null,
+    forward_to: [...f.querySelectorAll("input[name=forward_to]:checked")].map((i) => i.value),
+    wan_management: lanSeg === "lan1" ? f.wan_management.checked : base.wan_management };
   try {
-    const l = await api("PUT", "/api/lan", {
-      enabled: f.enabled.checked,
-      address: f.address.value,
-      ports,
-      dhcp_enabled: f.dhcp_enabled.checked,
-      pool_start: f.pool_start.value || null,
-      pool_end: f.pool_end.value || null,
-      lease_time: f.lease_time.value,
-      wan_management: f.wan_management.checked,
-    });
-    fillLanForm(l);
+    if (lanSeg === "new") {
+      const segs = await api("POST", "/api/lan/segments", body);
+      lanSeg = segs[segs.length - 1].config.id;
+    } else if (lanSeg === "lan1") {
+      await api("PUT", "/api/lan", body);
+    } else {
+      await api("PUT", `/api/lan/segments/${lanSeg}`, body);
+    }
+    lanFormFor = null;
     $("#lan-ok").textContent = "Применено";
     await loadLan();
-  } catch (e) {
-    $("#lan-error").textContent = e.message;
-  }
+  } catch (e) { $("#lan-error").textContent = e.message; }
 });
 
-// ---------------------------------------------------------------- LAN: закреплённые адреса
+$("#lan-delete").addEventListener("click", async () => {
+  if (!confirm(I18N.t("Удалить сегмент {name}? Его порты вернутся в основной LAN.", { name: segName(lanSeg) }))) return;
+  try {
+    await api("DELETE", `/api/lan/segments/${lanSeg}`);
+    lanSeg = "lan1"; lanFormFor = null;
+    await loadLan();
+  } catch (e) { $("#lan-error").textContent = e.message; }
+});
+
+// ---------------------------------------------------------------- DHCP (Kea)
+let dhcpSeg = "lan1";
+let dhcpFormFor = null;
+let dhcpData = null;
+const CUSTOM_TYPES = ["ip", "text", "hex", "uint8", "uint16", "uint32", "bool"];
+
+function customRow(c = {}) {
+  const types = CUSTOM_TYPES.map((t) => `<option ${t === (c.type || "text") ? "selected" : ""}>${t}</option>`).join("");
+  return `<tr data-row="custom"><td>${inp("code", c.code, 'type="number" min="1" max="254" class="narrow"')}</td>
+    <td><select name="type">${types}</select></td><td>${inp("value", c.value, 'size="28"')}</td>
+    <td>${inp("comment", c.comment, 'size="18"')}</td>
+    <td><button type="button" class="danger" data-del-row>×</button></td></tr>`;
+}
+
+function fillDhcpForm(seg) {
+  const f = $("#dhcp-form");
+  const s = seg.settings, o = s.dhcp_options;
+  f.dhcp_enabled.checked = s.dhcp_enabled;
+  f.pool_start.value = s.pool_start ?? "";
+  f.pool_end.value = s.pool_end ?? "";
+  f.lease_time.value = s.lease_time;
+  if (!f.lease_time.value) f.lease_time.add(new Option(s.lease_time, s.lease_time, true, true));
+  for (const k of ["dns_servers", "domain_search", "ntp_servers", "wins_servers", "tftp_servers_150", "sip_servers", "static_routes"]) {
+    f[k].value = csv(o[k]);
+  }
+  for (const k of ["time_offset", "mtu", "tftp_server", "boot_file", "provisioning_url", "wpad_url", "vendor_43"]) {
+    f[k].value = o[k] ?? "";
+  }
+  $("#dhcp-custom").innerHTML = (o.custom || []).map(customRow).join("");
+  dhcpFormFor = seg.id;
+}
+
 function renderStatic(list) {
   $("#static-leases").innerHTML = list.map((x) => `
     <tr class="${x.valid ? "" : "row-inactive"}"><td>${esc(x.name ?? "—")}</td><td>${esc(x.ip)}</td><td>${esc(x.mac)}</td>
@@ -269,6 +349,71 @@ function renderStatic(list) {
       <td class="actions"><button type="button" data-unpin="${esc(x.mac)}" class="danger">Открепить</button></td></tr>`).join("")
     || '<tr><td colspan="5" class="hint">нет</td></tr>';
 }
+
+async function loadDhcp() {
+  const d = await api("GET", "/api/dhcp");
+  dhcpData = d;
+  if (!d.segments.some((s) => s.id === dhcpSeg)) dhcpSeg = "lan1";
+  segTabs("#dhcp-tabs", dhcpSeg, d.segments, false);
+  const seg = d.segments.find((s) => s.id === dhcpSeg);
+  $("#dh-state").innerHTML = !d.installed ? '<span class="flag-x">нет в образе</span>'
+    : d.running ? '<span class="flag-r">работает</span>' : "выключен";
+  $("#dh-net").textContent = `${seg.network} (${seg.bridge})` + (seg.enabled ? "" : " · сегмент выключен");
+  $("#dh-domain").textContent = seg.domain || "—";
+  $("#dh-dns").textContent = seg.settings.dhcp_options.dns_servers?.length ? csv(seg.settings.dhcp_options.dns_servers)
+    : seg.dns_enabled ? `роутер (${seg.address.split("/")[0]})` : "DNS провайдера";
+  $("#dh-error").textContent = d.error || "";
+  renderStatic(seg.static_leases);
+  const leases = d.leases.filter((l) => l.lan === dhcpSeg);
+  $("#lan-leases").innerHTML = leases.map((x) => `
+    <tr><td>${esc(x.name ?? x.hostname ?? "—")}</td><td>${esc(x.ip)}</td><td>${esc(x.mac)}</td>
+        <td>${esc(x.vendor ?? "—")}</td>
+        <td>${x.expires ? new Date(x.expires * 1000).toLocaleString(I18N.locale()) : "бессрочно"}</td>
+        <td class="actions">${x.static ? '<span class="badge lan">закреплён</span>'
+          : `<button type="button" data-pin="${esc(x.mac)}" data-ip="${esc(x.ip)}" data-name="${esc(x.hostname ?? "")}">Закрепить</button>`}</td></tr>`).join("")
+    || '<tr><td colspan="6" class="hint">пока никого</td></tr>';
+  if (dhcpFormFor !== dhcpSeg) fillDhcpForm(seg);
+}
+
+$("#dhcp-tabs").addEventListener("click", (ev) => {
+  const t = ev.target.closest(".tab");
+  if (!t) return;
+  dhcpSeg = t.dataset.seg; dhcpFormFor = null;
+  ["#dhcp-form-error", "#dhcp-form-ok", "#static-error"].forEach((x) => { $(x).textContent = ""; });
+  loadDhcp().catch(console.error);
+});
+
+$("#dhcp-custom-add").addEventListener("click", () => $("#dhcp-custom").insertAdjacentHTML("beforeend", customRow()));
+$("#dhcp-custom").addEventListener("click", (ev) => { const b = ev.target.closest("[data-del-row]"); if (b) b.closest("tr").remove(); });
+
+$("#dhcp-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const f = ev.target;
+  $("#dhcp-form-error").textContent = ""; $("#dhcp-form-ok").textContent = "";
+  const v = (k) => opt(f[k].value);
+  const body = {
+    dhcp_enabled: f.dhcp_enabled.checked, pool_start: v("pool_start"), pool_end: v("pool_end"), lease_time: f.lease_time.value,
+    dhcp_options: {
+      dns_servers: items(f.dns_servers.value), domain_search: items(f.domain_search.value),
+      ntp_servers: items(f.ntp_servers.value), wins_servers: items(f.wins_servers.value),
+      tftp_servers_150: items(f.tftp_servers_150.value), sip_servers: items(f.sip_servers.value),
+      static_routes: f.static_routes.value.split(",").map((x) => x.trim()).filter(Boolean),
+      time_offset: num(f.time_offset.value), mtu: num(f.mtu.value),
+      tftp_server: v("tftp_server"), boot_file: v("boot_file"), provisioning_url: v("provisioning_url"),
+      wpad_url: v("wpad_url"), vendor_43: v("vendor_43"),
+      custom: [...$("#dhcp-custom").querySelectorAll("[data-row]")].map((r) => ({
+        code: num(r.querySelector("[name=code]").value), type: r.querySelector("[name=type]").value,
+        value: r.querySelector("[name=value]").value, comment: opt(r.querySelector("[name=comment]").value),
+      })).filter((c) => c.code),
+    },
+  };
+  try {
+    const d = await api("PUT", `/api/dhcp/${dhcpSeg}`, body);
+    fillDhcpForm(d.segments.find((s) => s.id === dhcpSeg));
+    $("#dhcp-form-ok").textContent = "Применено";
+    await loadDhcp();
+  } catch (e) { $("#dhcp-form-error").textContent = e.message; }
+});
 
 $("#lan-leases").addEventListener("click", (ev) => {
   const b = ev.target.closest("button[data-pin]");
@@ -286,10 +431,10 @@ $("#static-form").addEventListener("submit", async (ev) => {
   const f = ev.target;
   $("#static-error").textContent = "";
   try {
-    renderStatic(await api("POST", "/api/lan/static-leases",
+    renderStatic(await api("POST", `/api/dhcp/${dhcpSeg}/static-leases`,
       { mac: f.mac.value, ip: f.ip.value, name: f.name.value || null }));
     f.reset();
-    await loadLan();
+    await loadDhcp();
   } catch (e) { $("#static-error").textContent = e.message; }
 });
 
@@ -298,9 +443,159 @@ $("#static-leases").addEventListener("click", async (ev) => {
   if (!b) return;
   $("#static-error").textContent = "";
   try {
-    renderStatic(await api("DELETE", `/api/lan/static-leases/${encodeURIComponent(b.dataset.unpin)}`));
-    await loadLan();
+    renderStatic(await api("DELETE", `/api/dhcp/${dhcpSeg}/static-leases/${encodeURIComponent(b.dataset.unpin)}`));
+    await loadDhcp();
   } catch (e) { $("#static-error").textContent = e.message; }
+});
+
+// ---------------------------------------------------------------- DNS (BIND 9)
+let dnsData = null;
+let dnsZone = null;             // имя выбранной зоны; "new" — новая
+let dnsFormLoaded = false;
+let zoneFormFor = null;
+const DNS_TYPES = ["A", "AAAA", "CNAME", "MX", "TXT", "SRV", "PTR", "NS", "CAA"];
+const SOURCE = { dhcp: "DHCP", "static-lease": "закреплённый адрес", router: "роутер", ptr: "PTR по A-записи" };
+
+function recordRow(r = {}) {
+  const types = DNS_TYPES.map((t) => `<option ${t === (r.type || "A") ? "selected" : ""}>${t}</option>`).join("");
+  return `<tr data-row="rec"><td>${inp("name", r.name, 'size="12" placeholder="www"')}</td>
+    <td><select name="type">${types}</select></td>
+    <td>${inp("value", r.value, 'size="22" placeholder="192.168.88.20"')}</td>
+    <td>${inp("priority", r.priority, 'type="number" min="0" class="narrow"')}</td>
+    <td>${inp("weight", r.weight, 'type="number" min="0" class="narrow"')}</td>
+    <td>${inp("port", r.port, 'type="number" min="0" max="65535" class="narrow"')}</td>
+    <td>${inp("ttl", r.ttl, 'type="number" min="0" class="narrow"')}</td>
+    <td>${inp("comment", r.comment, 'size="14"')}</td>
+    <td><button type="button" class="danger" data-del-row>×</button></td></tr>`;
+}
+
+function fillDnsForm(c) {
+  const f = $("#dns-form");
+  f.forwarders.value = csv(c.forwarders);
+  f.forward_only.checked = c.forward_only;
+  f.dnssec.checked = c.dnssec;
+  f.cache_mb.value = c.cache_mb;
+  f.allow.value = csv(c.allow);
+  dnsFormLoaded = true;
+}
+
+function fillZoneForm() {
+  const f = $("#zone-form");
+  const z = dnsData.config.zones.find((x) => x.name === dnsZone)
+    || { name: "", ttl: 3600, dhcp_names: true, auto_ptr: true, records: [] };
+  const isNew = dnsZone === "new";
+  f.zone_name.value = z.name;
+  f.zone_name.readOnly = !isNew;
+  $("#zone-rev-label").hidden = !isNew;
+  f.reverse_net.value = "";
+  f.zone_ttl.value = z.ttl;
+  f.dhcp_names.checked = z.dhcp_names;
+  f.auto_ptr.checked = z.auto_ptr;
+  const info = dnsData.zones.find((x) => x.name === dnsZone);
+  const segs = info ? info.segments.map(segNameDns).join(", ") : "";
+  $("#zone-hint").textContent = isNew ? "Новая зона: обычная (office.lan) или обратная — укажите сеть, имя построится само."
+    : info?.reverse ? "Обратная зона: адрес → имя (PTR)."
+    : segs ? I18N.t("Домен сегментов: {s}. Имена их устройств из DHCP попадают сюда.", { s: segs })
+    : "Ни один сегмент LAN не использует этот домен.";
+  $("#zone-records").innerHTML = z.records.map(recordRow).join("");
+  $("#zone-delete").hidden = isNew;
+  zoneFormFor = dnsZone;
+}
+
+const segNameDns = (id) => (dnsData.segments.find((s) => s.id === id)?.name) || id;
+
+async function loadDns() {
+  const d = await api("GET", "/api/dns");
+  dnsData = d;
+  const c = d.config;
+  if (dnsZone !== "new" && !c.zones.some((z) => z.name === dnsZone)) dnsZone = c.zones[0]?.name ?? "new";
+  $("#dn-state").innerHTML = !d.installed ? '<span class="flag-x">нет в образе</span>'
+    : d.running ? '<span class="flag-r">работает</span>' : d.listen.length ? '<span class="flag-x">не запущен</span>' : "выключен";
+  $("#dn-listen").textContent = d.listen.length ? csv(d.listen) : "DNS не включён ни на одном LAN";
+  $("#dn-fwd").textContent = d.forwarders.length ? csv(d.forwarders) + (c.forwarders.length ? "" : " (авто)") : "корневые серверы";
+  $("#dn-zcount").textContent = c.zones.length;
+  $("#dn-error").textContent = d.error || "";
+  $("#zone-tabs").innerHTML = d.zones.map((z) => `<a class="tab ${z.name === dnsZone ? "active" : ""}" data-zone="${esc(z.name)}">${esc(z.name)}</a>`).join("")
+    + `<a class="tab ${dnsZone === "new" ? "active" : ""}" data-zone="new">+ Зона</a>`;
+  const auto = d.auto_names.filter((a) => a.zone === dnsZone);
+  $("#zone-auto").innerHTML = auto.map((a) => `<tr><td>${esc(a.name)}</td><td>${esc(a.type)}</td><td>${esc(a.value)}</td>
+    <td>${esc(SOURCE[a.source] || a.source)}</td></tr>`).join("") || '<tr><td colspan="4" class="hint">нет</td></tr>';
+  if (!dnsFormLoaded) fillDnsForm(c);
+  if (zoneFormFor !== dnsZone) fillZoneForm();
+}
+
+$("#zone-tabs").addEventListener("click", (ev) => {
+  const t = ev.target.closest(".tab");
+  if (!t) return;
+  dnsZone = t.dataset.zone; zoneFormFor = null;
+  document.querySelectorAll(".zone-error, .zone-ok").forEach((x) => { x.textContent = ""; });
+  loadDns().catch(console.error);
+});
+
+$("#zone-record-add").addEventListener("click", () => $("#zone-records").insertAdjacentHTML("beforeend", recordRow()));
+$("#zone-records").addEventListener("click", (ev) => { const b = ev.target.closest("[data-del-row]"); if (b) b.closest("tr").remove(); });
+
+async function saveDns(config, okBox, errBox) {
+  errBox.textContent = ""; okBox.textContent = "";
+  try {
+    const d = await api("PUT", "/api/dns", config);
+    dnsData = d;
+    okBox.textContent = "Применено";
+    return d;
+  } catch (e) { errBox.textContent = e.message; return null; }
+}
+
+$("#dns-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const f = ev.target;
+  const c = { ...dnsData.config, forwarders: items(f.forwarders.value), forward_only: f.forward_only.checked,
+              dnssec: f.dnssec.checked, cache_mb: num(f.cache_mb.value) ?? 64, allow: items(f.allow.value) };
+  if (await saveDns(c, f.querySelector(".dns-form-ok"), f.querySelector(".dns-form-error"))) {
+    fillDnsForm(dnsData.config);
+    loadDns().catch(console.error);
+  }
+});
+
+function reverseName(net) {
+  const m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)\/(8|16|24)$/.exec(net.trim());
+  if (!m) return null;
+  const oct = [m[1], m[2], m[3]].slice(0, Number(m[5]) / 8);
+  return oct.reverse().join(".") + ".in-addr.arpa";
+}
+
+$("#zone-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const f = ev.target;
+  const err = f.querySelector(".zone-error"), ok = f.querySelector(".zone-ok");
+  let name = f.zone_name.value.trim().toLowerCase().replace(/\.$/, "");
+  if (dnsZone === "new" && f.reverse_net.value.trim()) {
+    name = reverseName(f.reverse_net.value);
+    if (!name) { err.textContent = I18N.t("обратная зона строится для сети /8, /16 или /24"); return; }
+  }
+  const val = (r, k) => r.querySelector(`[name=${k}]`).value;
+  if (!name) { err.textContent = I18N.t("укажите имя зоны или сеть для обратной зоны"); return; }
+  const zone = { name, ttl: num(f.zone_ttl.value) ?? 3600, dhcp_names: f.dhcp_names.checked, auto_ptr: f.auto_ptr.checked,
+    records: [...$("#zone-records").querySelectorAll("[data-row]")].map((r) => ({
+      name: val(r, "name").trim(), type: val(r, "type"), value: val(r, "value").trim(),
+      priority: num(val(r, "priority")), weight: num(val(r, "weight")), port: num(val(r, "port")),
+      ttl: num(val(r, "ttl")), comment: opt(val(r, "comment")),
+    })).filter((r) => r.name && r.value) };
+  const zones = dnsZone === "new" ? [...dnsData.config.zones, zone]
+    : dnsData.config.zones.map((z) => (z.name === dnsZone ? zone : z));
+  if (await saveDns({ ...dnsData.config, zones }, ok, err)) {
+    dnsZone = name; zoneFormFor = null;
+    loadDns().catch(console.error);
+  }
+});
+
+$("#zone-delete").addEventListener("click", async () => {
+  if (!confirm(I18N.t("Удалить зону {name} со всеми записями?", { name: dnsZone }))) return;
+  const f = $("#zone-form");
+  const zones = dnsData.config.zones.filter((z) => z.name !== dnsZone);
+  if (await saveDns({ ...dnsData.config, zones }, f.querySelector(".zone-ok"), f.querySelector(".zone-error"))) {
+    dnsZone = null; zoneFormFor = null;
+    loadDns().catch(console.error);
+  }
 });
 
 // ---------------------------------------------------------------- VPN: вкладки
@@ -1177,6 +1472,8 @@ const pages = {
   "status": loadStatus,
   "wan": loadWan,
   "lan": loadLan,
+  "dhcp": loadDhcp,
+  "dns": loadDns,
   "vpn": loadVpn,
   "firewall": loadFirewall,
   "routing": loadRouting,

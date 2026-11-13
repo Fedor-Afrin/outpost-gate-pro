@@ -29,6 +29,26 @@ class FakeApi:
                          "leases": [{"mac": "00:0b:82:aa:bb:cc", "ip": "192.168.88.20", "hostname": "GXP1625",
                                      "vendor": "Grandstream"}],
                          "static_leases": [{"mac": "aa:aa:aa:aa:aa:aa", "ip": "192.168.88.5", "name": "Принтер"}]},
+            "/api/dhcp": {"running": True, "segments": [
+                {"id": "lan1", "name": "LAN", "bridge": "br-lan", "enabled": True, "address": "192.168.88.1/24",
+                 "network": "192.168.88.0/24", "domain": "office.lan", "dns_enabled": True,
+                 "settings": {"dhcp_enabled": True, "pool_start": "192.168.88.10", "pool_end": "192.168.88.254",
+                              "lease_time": "12h", "dhcp_options": {"ntp_servers": ["192.168.88.1"]}},
+                 "static_leases": [{"mac": "aa:aa:aa:aa:aa:aa", "ip": "192.168.88.5", "name": "Принтер"}]},
+                {"id": "lan2", "name": "Guests", "bridge": "br-lan2", "enabled": True, "address": "10.20.0.1/24",
+                 "network": "10.20.0.0/24", "domain": "guest.lan", "dns_enabled": False,
+                 "settings": {"dhcp_enabled": True, "pool_start": "10.20.0.10", "pool_end": "10.20.0.254",
+                              "lease_time": "1h", "dhcp_options": {}}, "static_leases": []}],
+                "leases": [{"mac": "00:0b:82:aa:bb:cc", "ip": "192.168.88.20", "hostname": "GXP1625",
+                            "vendor": "Grandstream", "lan": "lan1"}]},
+            "/api/dns": {"running": True, "listen": ["192.168.88.1"], "forwarders": ["1.1.1.1"], "auto_names": [
+                             {"zone": "office.lan", "name": "gxp1625", "type": "A", "value": "192.168.88.20", "source": "dhcp"}],
+                         "zones": [{"name": "office.lan"}],
+                         "config": {"forwarders": [], "forward_only": False, "dnssec": False, "allow": [], "cache_mb": 64,
+                                    "zones": [{"name": "office.lan", "ttl": 3600, "dhcp_names": True, "auto_ptr": True,
+                                               "records": [{"name": "pbx", "type": "A", "value": "192.168.88.5"}]},
+                                              {"name": "88.168.192.in-addr.arpa", "ttl": 3600, "dhcp_names": True,
+                                               "auto_ptr": True, "records": []}]}},
             "/api/ip/routes": [
                 {"id": 7, "dst_address": "10.0.0.0/8", "gateway": "192.168.88.254", "distance": 1, "interface": "br-lan",
                  "comment": None, "disabled": False, "dynamic": False, "active": True, "connected": False, "static": True}],
@@ -376,3 +396,39 @@ def test_routing_bgp(rctx):
     out.clear()
     c.execute(cx, "/routing route print", [])
     assert out[0] == "Flags: A - active, o - ospf, b - bgp" and out[2].split()[:3] == ["0", "Ab", "10.0.0.0/8"]
+
+
+
+def test_dhcp_and_dns_cli(ctx):
+    import copy
+    cx, out = ctx
+    c.execute(cx, "/ip dhcp-server print", [])
+    assert out[2].split()[:3] == ["0", "dhcp-lan1", "br-lan"] and out[3].split()[:3] == ["1", "dhcp-lan2", "br-lan2"]
+    out.clear()
+    c.execute(cx, "/ip dhcp-server network print", [])
+    assert "(провайдер)" in out[2] and "office.lan" in out[1]
+    out.clear()
+    c.execute(cx, "/ip dns print", [])
+    assert any("dynamic-servers: 1.1.1.1" in l for l in out)
+    out.clear()
+    c.execute(cx, "/ip dns static print", [])
+    assert out[0] == "Flags: D - dynamic (из DHCP, router, PTR)"
+    assert out[2].split()[:3] == ["0", "pbx.office.lan", "A"] and out[3].split()[:3] == ["1", "D", "gxp1625.office.lan"]
+    with pytest.raises(c.CliError, match="dynamic"):
+        c.execute(cx, "/ip dns static remove 1", [])
+    snapshot = copy.deepcopy(cx.api.data["/api/dns"])
+    c.execute(cx, "/ip dns static add name=www.office.lan type=CNAME cname=pbx", [])
+    m, path, body = cx.api.calls[-1]
+    assert (m, path) == ("PUT", "/api/dns") and body["zones"][0]["records"][-1] == {"name": "www", "type": "CNAME", "value": "pbx"}
+    cx.api.data["/api/dns"] = copy.deepcopy(snapshot)
+    c.execute(cx, "/ip dns static add name=5.88.168.192.in-addr.arpa type=PTR value=pbx.office.lan.", [])
+    assert cx.api.calls[-1][2]["zones"][1]["records"] == [{"name": "5", "type": "PTR", "value": "pbx.office.lan."}]
+    with pytest.raises(c.CliError, match="нет зоны"):
+        c.execute(cx, "/ip dns static add name=x.example.com address=1.2.3.4", [])
+    cx.api.data["/api/dns"] = copy.deepcopy(snapshot)
+    c.execute(cx, "/ip dns static print", [])
+    c.execute(cx, "/ip dns static remove 0", [])
+    assert cx.api.calls[-1][2]["zones"][0]["records"] == []
+    c.execute(cx, "/ip dns set servers=9.9.9.9,1.1.1.1 dnssec=yes", [])
+    body = cx.api.calls[-1][2]
+    assert body["forwarders"] == ["9.9.9.9", "1.1.1.1"] and body["dnssec"] is True

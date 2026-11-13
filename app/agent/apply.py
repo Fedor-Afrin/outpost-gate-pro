@@ -5,7 +5,7 @@ router.yaml — единый источник правды (аналог /export
 При старте API агент приводит систему к конфигу, строго по порядку:
   1. ip_forward
   2. WAN (адрес/шлюз или запуск DHCP-клиента)
-  3. LAN (мост br-lan, dnsmasq, NAT и фаервол)
+  3. LAN: сегменты (мосты br-lan, br-lan2…), DHCP (Kea), DNS (BIND), NAT и фаервол
   4. VPN (WireGuard / AmneziaWG / L2TP: туннель, маршруты, kill switch)
   5. дополнительные адреса (CLI: /ip address)
   6. статические маршруты (CLI: /ip route)  — после адресов: шлюз должен быть доступен

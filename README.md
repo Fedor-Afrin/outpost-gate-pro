@@ -61,6 +61,21 @@ neighbor, pool, dhcp-server, dhcp-client, dns, service, firewall filter/nat), `/
 (ping, traceroute, ip-scan, dns-lookup), `/routing` (ospf instance/network/interface/neighbor,
 bgp instance/network/peer/session, route), `/export`.
 
+## LAN-сегменты, DHCP (Kea) и DNS (BIND 9)
+- **LAN**: несколько сегментов — у каждого свой мост (br-lan, br-lan2…), адрес, порты, DNS и домен.
+  Основной сегмент забирает все свободные порты, кроме WAN и портов других сегментов. Между сегментами
+  транзит закрыт, пока он не разрешён в настройках сегмента (фаервол пропускает только выбранное направление).
+- **DHCP** (Kea): у каждого сегмента свой пул, срок аренды, опции и закреплённые адреса; DHCP можно
+  выключить (адреса вручную). Опции: DNS, домен и суффиксы поиска, NTP, смещение времени, MTU, WINS,
+  TFTP 66/67, Cisco 150, SIP 120, автонастройка 160, статические маршруты 121/249, WPAD 252, vendor 43
+  и любые свои опции по коду (ip, text, hex, uint8/16/32, bool). Платные модули Kea не используются.
+- **DNS** (BIND 9): рекурсия и кэш для сегментов, forwarders (по умолчанию — DNS провайдера или
+  туннеля), DNSSEC, зоны и записи A, AAAA, CNAME, MX, TXT, SRV, PTR, NS, CAA. Имена устройств из DHCP
+  и закреплённых адресов попадают в зону домена сегмента (laptop.office.lan), обратные зоны сами
+  получают PTR. Зона по умолчанию — `office.lan` (можно переименовать и добавить свои).
+- CLI: `/ip dhcp-server print`, `/ip dhcp-server network print`, `/ip dns print`, `/ip dns set servers=…`,
+  `/ip dns static print | add name=pbx.office.lan address=192.168.88.5 | remove`.
+
 ## OSPF и BGP (FRRouting)
 Вкладка **Routing**: соседи и маршруты, настройки OSPF и BGP. Роутер генерирует `/etc/frr/frr.conf`
 целиком, проверяет его (`vtysh --dryrun`) и применяет без разрыва сессий (`frr-reload.py`).

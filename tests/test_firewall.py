@@ -23,7 +23,7 @@ def env(tmp_path, monkeypatch):
     (tmp_path / "data").mkdir()
     for mod in (firewall_rules, lan, vpn, wan):
         monkeypatch.setattr(mod, "store", store)
-    monkeypatch.setattr(lan, "load_state", lambda: {"address": "192.168.88.1/24"})
+    monkeypatch.setattr(lan, "load_state", lambda seg_id="lan1": {"address": "192.168.88.1/24"})
     monkeypatch.setattr(lan, "wan_interface", lambda: "eth1")
     monkeypatch.setattr(vpn, "load_state", lambda: {})
     applied = []

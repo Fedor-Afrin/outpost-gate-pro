@@ -1,17 +1,19 @@
 """
-LAN — все порты, кроме WAN, в мосту br-lan; dnsmasq раздаёт адреса и DNS; NAT в WAN.
+LAN — сегменты: у каждого свой мост, адрес, порты, DHCP (Kea), DNS (BIND) и домен.
 
-Как и WAN, LAN записывает в data/lan.json, что именно он сделал (какие порты
-забрал в мост, какие адреса перенёс с портов на мост), чтобы при выключении
-или смене настроек вернуть всё как было.
+  lan1 — основной сегмент, мост br-lan, секция lan: в router.yaml; порты «auto» —
+         все, кроме WAN и портов других сегментов;
+  lan2, lan3… — дополнительные (секция lans:), мосты br-lan2…, порты — явно.
+
+Между сегментами транзит закрыт, пока в сегменте не разрешено forward-to (фаервол).
+Как и WAN, каждый сегмент записывает в data/, что именно он сделал (порты в мосту,
+перенесённые адреса), чтобы при выключении или смене настроек вернуть всё как было.
 """
 from __future__ import annotations
 
 import ipaddress
 import json
 import os
-import signal
-import subprocess
 import tempfile
 import threading
 import time
@@ -19,13 +21,14 @@ from pathlib import Path
 
 from app.core.config import settings
 from app.core.store import store
-from app.models.lan import LanConfig, LanStatus, Lease, Port, StaticLease, StaticLeaseView
+from app.models.lan import (DhcpSegmentView, DhcpSettings, DhcpStatus, LanConfig, LanStatus, Lease, Port,
+                            SegmentStatus, StaticLease, StaticLeaseView)
 from app.services import firewall, netlink, oui, wan
 
 BRIDGE = "br-lan"
+MAX_SEGMENTS = 16
 
 _lock = threading.RLock()
-_dnsmasq: subprocess.Popen | None = None
 
 
 class LanError(Exception):
@@ -35,221 +38,109 @@ class LanError(Exception):
         self.message = message
 
 
-# --- файлы ---------------------------------------------------------------------------
+# --- файлы состояния -------------------------------------------------------------------
 def _data(name: str) -> Path:
     return Path(settings.data_dir) / name
 
 
-def state_file() -> Path:
-    return _data("lan.json")
+def state_file(seg_id: str = "lan1") -> Path:
+    return _data("lan.json" if seg_id == "lan1" else f"lan-{seg_id}.json")
 
 
-def load_state() -> dict:
+def load_state(seg_id: str = "lan1") -> dict:
     try:
-        return json.loads(state_file().read_text())
+        return json.loads(state_file(seg_id).read_text())
     except (OSError, ValueError):
         return {}
 
 
-def save_state(state: dict) -> None:
-    path = state_file()
+def save_state(state: dict, seg_id: str = "lan1") -> None:
+    path = state_file(seg_id)
     path.parent.mkdir(parents=True, exist_ok=True)
+    if not state:
+        path.unlink(missing_ok=True) if seg_id != "lan1" else path.write_text("{}")
+        return
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".lan.")
     with os.fdopen(fd, "w") as f:
         json.dump(state, f, indent=2)
     os.replace(tmp, path)
 
 
+def _known_state_ids() -> list[str]:
+    ids = ["lan1"]
+    folder = _data("lan.json").parent
+    for p in sorted(folder.glob("lan-lan*.json")) if folder.exists() else []:
+        ids.append(p.stem[len("lan-"):])
+    return ids
+
+
+# --- конфиг -----------------------------------------------------------------------------
+def _seg_from(data: dict, item: dict | None, seg_id: str | None = None) -> LanConfig:
+    return LanConfig.from_yaml(item, data.get("firewall"), seg_id)
+
+
+def segments(data: dict | None = None) -> list[LanConfig]:
+    data = store.load() if data is None else data
+    out = [_seg_from(data, data.get("lan"), "lan1")]
+    for item in data.get("lans") or []:
+        out.append(_seg_from(data, item))
+    return out
+
+
 def get_config() -> LanConfig:
-    data = store.load()
-    return LanConfig.from_yaml(data.get("lan"), data.get("firewall"))
+    """Основной сегмент (lan1) — для старых вызовов и CLI."""
+    return segments()[0]
 
 
-# --- dnsmasq ---------------------------------------------------------------------------
-def dnsmasq_conf(cfg: LanConfig, leases_file: str, resolv_file: str, hosts_file: str = "") -> str:
-    iface = ipaddress.ip_interface(cfg.address)
-    lines = [
-        "# сгенерировано OutpostGate Pro — не редактировать вручную",
-        "keep-in-foreground",
-        "log-facility=-",            # журнал — в docker logs
-        "pid-file=",
-        "user=root",
-        f"interface={BRIDGE}",
-        "bind-dynamic",              # слушать только адрес моста, порт 53 хоста не занимаем
-        "",
-        "# --- DNS ---",
-        f"resolv-file={resolv_file}",   # вышестоящие DNS от WAN, файл обновляется на лету
-        "domain-needed",
-        "bogus-priv",
-        "cache-size=1000",
-        "domain=lan",
-        "local=/lan/",
-        "expand-hosts",
-        "",
-    ]
-    if cfg.dhcp_enabled:
-        lines += [
-            "# --- DHCP ---",
-            f"dhcp-range={cfg.pool_start},{cfg.pool_end},{iface.network.netmask},{cfg.lease_time}",
-            f"dhcp-option=option:router,{iface.ip}",
-            f"dhcp-option=option:dns-server,{iface.ip}",
-            f"dhcp-leasefile={leases_file}",
-            *([f"dhcp-hostsfile={hosts_file}"] if hosts_file else []),   # закреплённые адреса, SIGHUP = перечитать
-            "dhcp-authoritative",
-            "dhcp-rapid-commit",
-        ]
+def get_segment(seg_id: str, data: dict | None = None) -> LanConfig:
+    for s in segments(data):
+        if s.id == seg_id:
+            return s
+    raise LanError(404, f"нет сегмента {seg_id}")
+
+
+def _save_segment(data: dict, seg: LanConfig) -> None:
+    """Записать сегмент в data (yaml), сохранив его закреплённые адреса."""
+    lan_yaml, fw_yaml = seg.to_yaml()
+    if seg.id == "lan1":
+        keep = _static_raw(data, "lan1")
+        if keep:
+            lan_yaml["dhcp-server"]["static-leases"] = keep
+        data["lan"] = lan_yaml
+        data["firewall"] = {**(data.get("firewall") or {}), **fw_yaml}
+        return
+    items = data.get("lans") or []
+    for i, item in enumerate(items):
+        if item.get("id") == seg.id:
+            keep = _static_raw(data, seg.id)
+            if keep:
+                lan_yaml["dhcp-server"]["static-leases"] = keep
+            items[i] = lan_yaml
+            break
     else:
-        lines.append(f"no-dhcp-interface={BRIDGE}")
-    return "\n".join(lines) + "\n"
+        items.append(lan_yaml)
+    data["lans"] = items
 
 
-def dnsmasq_running() -> bool:
-    return _dnsmasq is not None and _dnsmasq.poll() is None
-
-
-def start_dnsmasq(cfg: LanConfig) -> None:
-    global _dnsmasq
-    conf = _data("dnsmasq.conf")
-    if not wan.resolv_file().exists():
-        wan.write_upstream_dns(wan.get_config().dns)
-    write_hosts_file()
-    conf.write_text(dnsmasq_conf(cfg, str(_data("dnsmasq.leases")), str(wan.resolv_file()),
-                                 str(_data("dnsmasq.hosts"))))
-    try:
-        _dnsmasq = subprocess.Popen(["dnsmasq", f"--conf-file={conf}"])
-    except FileNotFoundError as e:
-        raise LanError(500, "нет dnsmasq — пересоберите образ") from e
-    print(f"[lan] dnsmasq запущен (pid {_dnsmasq.pid})")
-
-
-def stop_dnsmasq() -> None:
-    global _dnsmasq
-    if dnsmasq_running():
-        _dnsmasq.terminate()
-        try:
-            _dnsmasq.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            _dnsmasq.kill()
-            _dnsmasq.wait()
-        print("[lan] dnsmasq остановлен")
-    _dnsmasq = None
-
-
-def leases() -> list[Lease]:
-    """Формат файла dnsmasq: <срок> <MAC> <IP> <имя|*> <client-id|*>"""
-    try:
-        lines = _data("dnsmasq.leases").read_text().splitlines()
-    except OSError:
-        return []
-    static = {l.mac: l for l in static_leases()}
-    out = []
-    for line in lines:
-        parts = line.split()
-        if len(parts) < 4:
-            continue
-        expiry, mac, ip, name = parts[:4]
-        out.append(Lease(
-            ip=ip, mac=mac,
-            hostname=None if name == "*" else name,
-            vendor=oui.vendor(mac),
-            expires=None if expiry == "0" else float(expiry),
-            static=mac.lower() in static,
-            name=static[mac.lower()].name if mac.lower() in static else None,
-        ))
-    return sorted(out, key=lambda l: tuple(int(x) for x in l.ip.split(".")))
-
-
-# --- закреплённые адреса ----------------------------------------------------------
-def _static_raw(data: dict) -> list[dict]:
-    return (((data.get("lan") or {}).get("dhcp-server") or {}).get("static-leases")) or []
-
-
-def static_leases() -> list[StaticLease]:
-    return [StaticLease(**x) for x in _static_raw(store.load())]
-
-
-def static_view(cfg: LanConfig | None = None) -> list[StaticLeaseView]:
-    cfg = cfg or get_config()
-    iface = ipaddress.ip_interface(cfg.address)
-    start, end = ipaddress.ip_address(cfg.pool_start), ipaddress.ip_address(cfg.pool_end)
-    out = []
-    for l in static_leases():
-        ip = ipaddress.ip_address(l.ip)
-        out.append(StaticLeaseView(
-            **l.model_dump(),
-            in_pool=start <= ip <= end,
-            valid=ip in iface.network and ip != iface.ip,
-        ))
-    return sorted(out, key=lambda x: ipaddress.ip_address(x.ip))
-
-
-def write_hosts_file() -> None:
-    path = _data("dnsmasq.hosts")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(l.dnsmasq_line() + "\n" for l in static_leases()))
-
-
-def reload_dnsmasq() -> None:
-    write_hosts_file()
-    if dnsmasq_running():
-        _dnsmasq.send_signal(signal.SIGHUP)   # перечитать dhcp-hostsfile без разрыва для клиентов
-
-
-def _validate_static(item: StaticLease, others: list[StaticLease]) -> None:
-    cfg = get_config()
-    iface = ipaddress.ip_interface(cfg.address)
-    ip = ipaddress.ip_address(item.ip)
-    if ip not in iface.network:
-        raise LanError(400, f"{ip} вне сети LAN {iface.network}")
-    if ip == iface.ip:
-        raise LanError(400, f"{ip} — это адрес самого роутера")
-    if ip in (iface.network.network_address, iface.network.broadcast_address):
-        raise LanError(400, f"{ip} — адрес сети или broadcast")
-    for o in others:
-        if o.mac == item.mac:
-            raise LanError(409, f"MAC {item.mac} уже закреплён за {o.ip}")
-        if o.ip == item.ip:
-            raise LanError(409, f"адрес {item.ip} уже закреплён за {o.mac}")
-
-
-def _save_static(items: list[StaticLease]) -> None:
-    with store.transaction() as data:
-        lan_cfg = data.get("lan") or {}
-        dhcp = lan_cfg.get("dhcp-server") or {}
-        dhcp["static-leases"] = [i.model_dump(exclude_none=True) for i in items]
-        lan_cfg["dhcp-server"] = dhcp
-        data["lan"] = lan_cfg
-    reload_dnsmasq()
-
-
-def add_static(item: StaticLease) -> list[StaticLeaseView]:
-    with _lock:
-        items = static_leases()
-        _validate_static(item, items)
-        _save_static(items + [item])
-    return static_view()
-
-
-def update_static(mac: str, item: StaticLease) -> list[StaticLeaseView]:
-    mac = mac.lower()
-    with _lock:
-        items = static_leases()
-        if not any(i.mac == mac for i in items):
-            raise LanError(404, f"MAC {mac} не закреплён")
-        others = [i for i in items if i.mac != mac]
-        _validate_static(item, others)
-        _save_static([item if i.mac == mac else i for i in items])
-    return static_view()
-
-
-def delete_static(mac: str) -> list[StaticLeaseView]:
-    mac = mac.lower()
-    with _lock:
-        items = static_leases()
-        if not any(i.mac == mac for i in items):
-            raise LanError(404, f"MAC {mac} не закреплён")
-        _save_static([i for i in items if i.mac != mac])
-    return static_view()
+def _validate_all(segs: list[LanConfig]) -> None:
+    ids = [s.id for s in segs]
+    for s in segs:
+        for t in s.forward_to:
+            if t not in ids:
+                raise LanError(400, f"{s.name}: транзит в несуществующий сегмент {t}")
+    active = [s for s in segs if s.enabled]
+    for i, a in enumerate(active):
+        for b in active[i + 1:]:
+            if a.network.overlaps(b.network):
+                raise LanError(400, f"сети сегментов {a.name} ({a.network}) и {b.name} ({b.network}) пересекаются")
+    used: dict[str, str] = {}
+    for s in active:
+        if s.id != "lan1" and not s.ports:
+            raise LanError(400, f"{s.name}: выберите порты — дополнительный сегмент не может быть без портов")
+        for p in s.ports:
+            if p in used:
+                raise LanError(400, f"порт {p} уже в сегменте {used[p]}")
+            used[p] = s.name
 
 
 # --- порты -------------------------------------------------------------------------
@@ -260,15 +151,18 @@ def wan_interface() -> str | None:
         return None
 
 
-def lan_ports(cfg: LanConfig, wan_if: str | None) -> list[str]:
+def lan_ports(cfg: LanConfig, wan_if: str | None, taken: set[str] = frozenset()) -> list[str]:
+    """Порты сегмента. lan1 с «auto» — все свободные, кроме WAN и портов других сегментов."""
     existing = set(wan.candidates())
     if cfg.ports:
         return [p for p in cfg.ports if p in existing and p != wan_if]
-    return [p for p in sorted(existing) if p != wan_if]
+    if cfg.id != "lan1":
+        return []
+    return [p for p in sorted(existing) if p != wan_if and p not in taken]
 
 
 def _check_overlap(cfg: LanConfig, wan_if: str | None) -> None:
-    lan_net = ipaddress.ip_interface(cfg.address).network
+    lan_net = cfg.network
     for ifname, cidr in netlink.kernel_ipv4_addresses():
         if ifname == wan_if and ipaddress.ip_interface(cidr).network.overlaps(lan_net):
             raise LanError(400, f"сеть LAN {lan_net} пересекается с адресом на WAN ({wan_if}: {cidr}). "
@@ -288,14 +182,13 @@ def _wait_for_ports(seconds: float = 5.0) -> None:
         time.sleep(0.25)
 
 
-# --- применение ------------------------------------------------------------------------
-def teardown(state: dict) -> None:
-    """Вернуть всё, как было до включения LAN."""
-    stop_dnsmasq()
-    firewall.remove()
+# --- мосты -------------------------------------------------------------------------
+def teardown(state: dict, seg_id: str = "lan1") -> None:
+    """Вернуть всё, как было до включения сегмента."""
+    bridge = state.get("bridge_name") or (BRIDGE if seg_id == "lan1" else f"br-{seg_id}")
     if state.get("address"):
         try:
-            netlink.addr_del(BRIDGE, state["address"])
+            netlink.addr_del(bridge, state["address"])
         except netlink.NetlinkOpError as e:
             print(f"[lan] WARNING: {e}")
     for port in state.get("ports", []):
@@ -309,21 +202,19 @@ def teardown(state: dict) -> None:
         except netlink.NetlinkOpError as e:
             print(f"[lan] WARNING: {e}")
     if state.get("bridge"):
-        netlink.link_delete(BRIDGE)
-    save_state({})
+        netlink.link_delete(bridge)
+    save_state({}, seg_id)
 
 
-def setup(cfg: LanConfig) -> None:
-    wan_if = wan_interface()
-    if not wan_if:
-        raise LanError(400, "сначала нужен WAN: интерфейс WAN не найден")
+def setup(cfg: LanConfig, wan_if: str, taken: set[str] = frozenset()) -> list[str]:
     _check_overlap(cfg, wan_if)
-    ports = lan_ports(cfg, wan_if)
+    ports = lan_ports(cfg, wan_if, taken)
+    bridge = cfg.bridge
 
-    state: dict = {"bridge": True, "ports": [], "moved": [], "address": None}
+    state: dict = {"bridge": True, "bridge_name": bridge, "ports": [], "moved": [], "address": None}
     mac = netlink.link_info(ports[0]).get("mac") if ports else None
-    netlink.bridge_create(BRIDGE, mac)
-    save_state(state)
+    netlink.bridge_create(bridge, mac)
+    save_state(state, cfg.id)
 
     for port in ports:
         # адреса порта переезжают на мост (иначе порт моста с IP работает некорректно)
@@ -331,96 +222,381 @@ def setup(cfg: LanConfig) -> None:
             if ifname == port:
                 netlink.addr_del(port, cidr)
                 state["moved"].append([port, cidr])
-                netlink.addr_add(BRIDGE, cidr)
-        netlink.link_set_master(port, BRIDGE)
+                netlink.addr_add(bridge, cidr)
+        netlink.link_set_master(port, bridge)
         netlink.link_set_up(port)
         state["ports"].append(port)
-        save_state(state)
+        save_state(state, cfg.id)
 
-    netlink.link_set_up(BRIDGE)
-    netlink.addr_add(BRIDGE, cfg.address)
+    netlink.link_set_up(bridge)
+    netlink.addr_add(bridge, cfg.address)
     state["address"] = cfg.address
-    save_state(state)
+    save_state(state, cfg.id)
+    print(f"[lan] {cfg.name}: {bridge} {cfg.address}, порты: {', '.join(ports) or 'нет'}")
+    return ports
 
-    start_dnsmasq(cfg)
+
+def segment_active(cfg: LanConfig) -> bool:
+    st = load_state(cfg.id)
+    return bool(st.get("address")) and (cfg.bridge, st["address"]) in set(netlink.kernel_ipv4_addresses())
+
+
+def _apply_all(segs: list[LanConfig]) -> None:
+    """Пересобрать все сегменты, затем DHCP, DNS и фаервол."""
+    for sid in _known_state_ids():
+        teardown(load_state(sid), sid)
+    active = [s for s in segs if s.enabled]
+    if active:
+        wan_if = wan_interface()
+        if not wan_if:
+            raise LanError(400, "сначала нужен WAN: интерфейс WAN не найден")
+        taken = {p for s in active if s.id != "lan1" for p in s.ports}
+        for s in sorted(active, key=lambda x: x.id != "lan1"):
+            setup(s, wan_if, taken)
     try:
-        firewall.refresh(cfg)         # NAT и правила с учётом WAN, LAN и VPN
+        firewall.refresh(segs[0])          # NAT и правила с учётом WAN, всех LAN и VPN
     except firewall.FirewallError as e:
         raise LanError(500, str(e)) from e
-    print(f"[lan] {BRIDGE} {cfg.address}, порты: {', '.join(ports) or 'нет'}")
+    _services(segs)
 
 
-def apply(cfg: LanConfig) -> None:
+def _services(segs: list[LanConfig] | None = None) -> None:
+    """DHCP (Kea) и DNS (BIND) по текущим сегментам."""
+    from app.services import dhcp, dns
+    segs = segs if segs is not None else segments()
+    try:
+        dhcp.apply(_dhcp_segments(segs), dns.upstream(dns.get_config()))
+    except dhcp.DhcpError as e:
+        raise LanError(e.status, e.message) from e
+    try:
+        dns.apply()
+    except dns.DnsError as e:
+        raise LanError(e.status, e.message) from e
+
+
+def _dhcp_segments(segs: list[LanConfig]):
+    return [(s, static_leases(s.id)) for s in segs if s.enabled and s.dhcp_enabled]
+
+
+def reload_dhcp() -> None:
+    from app.services import dhcp, dns
+    segs = segments()
+    dhcp.apply(_dhcp_segments(segs), dns.upstream(dns.get_config()))
+
+
+def apply(cfg: LanConfig | None = None) -> None:
+    """Совместимость: применить все сегменты (cfg — новый lan1, ещё не сохранённый)."""
     with _lock:
-        teardown(load_state())
-        if cfg.enabled:
-            setup(cfg)
+        segs = segments()
+        if cfg is not None:
+            segs = [cfg] + segs[1:]
+        _apply_all(segs)
+
+
+def _transaction(change) -> list[LanConfig]:
+    """Изменить сегменты в router.yaml и применить; ошибка — откат и к файлу, и к системе."""
+    from app.services import dns
+    with _lock:
+        before = store.load()
+        snapshot = json.loads(json.dumps({k: before.get(k) for k in ("lan", "lans", "firewall")}))
+        with store.transaction() as data:
+            change(data)
+            segs = segments(data)
+            _validate_all(segs)
+        try:
+            for s in segs:
+                if s.enabled and s.domain:
+                    dns.ensure_zone(s.domain)
+            _apply_all(segs)
+        except (netlink.NetlinkOpError, LanError) as e:
+            with store.transaction() as data:
+                for k, v in snapshot.items():
+                    if v is None:
+                        data.pop(k, None)
+                    else:
+                        data[k] = v
+            try:
+                _apply_all(segments())
+            except Exception as rollback_err:
+                print(f"[lan] ERROR: откат не удался: {rollback_err}")
+            if isinstance(e, LanError):
+                raise
+            raise LanError(400, str(e)) from e
+        return segs
 
 
 def update(new: LanConfig) -> LanStatus:
-    old = get_config()
-    try:
-        apply(new)
-    except (netlink.NetlinkOpError, LanError) as e:
-        try:
-            apply(old)
-        except Exception as rollback_err:
-            print(f"[lan] ERROR: откат не удался: {rollback_err}")
-        if isinstance(e, LanError):
-            raise
-        raise LanError(400, str(e)) from e
-    lan_yaml, fw_yaml = new.to_yaml()
-    with store.transaction() as cfg:
-        keep = _static_raw(cfg)                     # закреплённые адреса живут отдельно
-        if keep:
-            lan_yaml["dhcp-server"]["static-leases"] = keep
-        cfg["lan"] = lan_yaml
-        cfg.setdefault("firewall", {})
-        cfg["firewall"] = {**(cfg["firewall"] or {}), **fw_yaml}
+    """Основной сегмент (PUT /api/lan)."""
+    new = new.model_copy(update={"id": "lan1"})
+    _transaction(lambda data: _save_segment(data, new))
     return status()
+
+
+def update_segment(seg_id: str, new: LanConfig) -> list[SegmentStatus]:
+    get_segment(seg_id)
+    new = new.model_copy(update={"id": seg_id})
+    _transaction(lambda data: _save_segment(data, new))
+    return segments_status()
+
+
+def add_segment(new: LanConfig) -> list[SegmentStatus]:
+    segs = segments()
+    if len(segs) >= MAX_SEGMENTS:
+        raise LanError(400, f"не больше {MAX_SEGMENTS} сегментов")
+    ids = {s.id for s in segs}
+    seg_id = next(f"lan{i}" for i in range(2, 100) if f"lan{i}" not in ids)
+    name = new.name if new.name != "LAN" else seg_id.upper()
+    new = new.model_copy(update={"id": seg_id, "name": name})
+    _transaction(lambda data: _save_segment(data, new))
+    return segments_status()
+
+
+def delete_segment(seg_id: str) -> list[SegmentStatus]:
+    if seg_id == "lan1":
+        raise LanError(400, "основной сегмент нельзя удалить — его можно выключить")
+    get_segment(seg_id)
+
+    def change(data):
+        data["lans"] = [i for i in data.get("lans") or [] if i.get("id") != seg_id]
+        for item in [data.get("lan") or {}, *(data.get("lans") or [])]:
+            if seg_id in (item.get("forward-to") or []):
+                item["forward-to"] = [x for x in item["forward-to"] if x != seg_id]
+    _transaction(change)
+    return segments_status()
+
+
+def update_dhcp(seg_id: str, new: DhcpSettings) -> DhcpStatus:
+    """Вкладка DHCP: пул, срок, опции — без пересборки моста."""
+    seg = get_segment(seg_id)
+    try:
+        merged = LanConfig.model_validate({**seg.model_dump(), **new.model_dump()})
+    except ValueError as e:
+        raise LanError(422, str(e)) from e
+    from app.services import dhcp
+    with _lock:
+        before = json.loads(json.dumps({k: store.load().get(k) for k in ("lan", "lans")}))
+        with store.transaction() as data:
+            _save_segment(data, merged)
+        try:
+            reload_dhcp()
+        except dhcp.DhcpError as e:
+            with store.transaction() as data:
+                for k, v in before.items():
+                    if v is None:
+                        data.pop(k, None)
+                    else:
+                        data[k] = v
+            try:
+                reload_dhcp()
+            except dhcp.DhcpError:
+                pass
+            raise LanError(e.status, e.message) from e
+    return dhcp_status()
 
 
 def on_wan_changed() -> None:
     """WAN поменялся (интерфейс или режим) — пересобрать LAN, NAT и фаервол."""
-    cfg = get_config()
-    if cfg.enabled:
+    segs = segments()
+    if any(s.enabled for s in segs):
         try:
-            apply(cfg)
+            with _lock:
+                _apply_all(segs)
         except (netlink.NetlinkOpError, LanError) as e:
             print(f"[lan] ERROR после смены WAN: {e}")
 
 
 def apply_startup() -> None:
-    cfg = get_config()
-    if not cfg.enabled:
-        teardown(load_state())   # остатки от прошлого запуска (режим host)
+    segs = segments()
+    if not any(s.enabled for s in segs):
+        for sid in _known_state_ids():
+            teardown(load_state(sid), sid)   # остатки от прошлого запуска (режим host)
+        _services(segs)
         return
     _wait_for_ports()
-    apply(cfg)
+    with _lock:
+        _apply_all(segs)
+
+
+def stop_services() -> None:
+    from app.services import dhcp, dns
+    dhcp.stop()
+    dns.stop()
+
+
+# --- аренды и закреплённые адреса ----------------------------------------------------
+def _static_raw(data: dict, seg_id: str = "lan1") -> list[dict]:
+    if seg_id == "lan1":
+        item = data.get("lan") or {}
+    else:
+        item = next((i for i in data.get("lans") or [] if i.get("id") == seg_id), {})
+    return ((item.get("dhcp-server") or {}).get("static-leases")) or []
+
+
+def static_leases(seg_id: str = "lan1") -> list[StaticLease]:
+    return [StaticLease(**x) for x in _static_raw(store.load(), seg_id)]
+
+
+def all_static() -> list[StaticLease]:
+    return [x for s in segments() for x in static_leases(s.id)]
+
+
+def leases() -> list[Lease]:
+    from app.services import dhcp
+    segs = segments()
+    subnets = {dhcp.subnet_id(s): s.id for s in segs}
+    static = {l.mac: l for l in all_static()}
+    out = []
+    for l in dhcp.read_leases(subnets):
+        st = static.get(l.mac)
+        out.append(l.model_copy(update={"static": st is not None, "name": st.name if st else None}))
+    return out
+
+
+def static_view(cfg: LanConfig | None = None) -> list[StaticLeaseView]:
+    cfg = cfg or get_config()
+    start, end = ipaddress.ip_address(cfg.pool_start), ipaddress.ip_address(cfg.pool_end)
+    out = []
+    for l in static_leases(cfg.id):
+        ip = ipaddress.ip_address(l.ip)
+        out.append(StaticLeaseView(**l.model_dump(), in_pool=start <= ip <= end,
+                                   valid=ip in cfg.network and str(ip) != cfg.router_ip))
+    return sorted(out, key=lambda x: ipaddress.ip_address(x.ip))
+
+
+def _validate_static(cfg: LanConfig, item: StaticLease, others: list[StaticLease]) -> None:
+    iface = ipaddress.ip_interface(cfg.address)
+    ip = ipaddress.ip_address(item.ip)
+    if ip not in iface.network:
+        raise LanError(400, f"{ip} вне сети LAN {iface.network}")
+    if ip == iface.ip:
+        raise LanError(400, f"{ip} — это адрес самого роутера")
+    if ip in (iface.network.network_address, iface.network.broadcast_address):
+        raise LanError(400, f"{ip} — адрес сети или broadcast")
+    for o in others:
+        if o.mac == item.mac:
+            raise LanError(409, f"MAC {item.mac} уже закреплён за {o.ip}")
+        if o.ip == item.ip:
+            raise LanError(409, f"адрес {item.ip} уже закреплён за {o.mac}")
+
+
+def _save_static(seg_id: str, items: list[StaticLease]) -> None:
+    raw = [i.model_dump(exclude_none=True) for i in items]
+    with store.transaction() as data:
+        if seg_id == "lan1":
+            lan_cfg = data.get("lan") or {}
+            lan_cfg.setdefault("dhcp-server", {})["static-leases"] = raw
+            data["lan"] = lan_cfg
+        else:
+            for item in data.get("lans") or []:
+                if item.get("id") == seg_id:
+                    item.setdefault("dhcp-server", {})["static-leases"] = raw
+    from app.services import dhcp
+    try:
+        reload_dhcp()
+    except dhcp.DhcpError as e:
+        print(f"[lan] WARNING: DHCP: {e.message}")
+
+
+def _seg_for_static(seg_id: str | None, ip: str | None = None) -> LanConfig:
+    if seg_id:
+        return get_segment(seg_id)
+    if ip:   # старый API без сегмента: по адресу
+        for s in segments():
+            if ipaddress.ip_address(ip) in s.network:
+                return s
+    return get_config()
+
+
+def add_static(item: StaticLease, seg_id: str | None = None) -> list[StaticLeaseView]:
+    with _lock:
+        cfg = _seg_for_static(seg_id, item.ip)
+        items = static_leases(cfg.id)
+        _validate_static(cfg, item, [x for x in all_static()])
+        _save_static(cfg.id, items + [item])
+        return static_view(get_segment(cfg.id))
+
+
+def _find_static(mac: str, seg_id: str | None) -> LanConfig:
+    for s in ([get_segment(seg_id)] if seg_id else segments()):
+        if any(i.mac == mac for i in static_leases(s.id)):
+            return s
+    raise LanError(404, f"MAC {mac} не закреплён")
+
+
+def update_static(mac: str, item: StaticLease, seg_id: str | None = None) -> list[StaticLeaseView]:
+    mac = mac.lower()
+    with _lock:
+        cfg = _find_static(mac, seg_id)
+        items = static_leases(cfg.id)
+        others = [i for i in all_static() if i.mac != mac]
+        _validate_static(cfg, item, others)
+        _save_static(cfg.id, [item if i.mac == mac else i for i in items])
+        return static_view(get_segment(cfg.id))
+
+
+def delete_static(mac: str, seg_id: str | None = None) -> list[StaticLeaseView]:
+    mac = mac.lower()
+    with _lock:
+        cfg = _find_static(mac, seg_id)
+        _save_static(cfg.id, [i for i in static_leases(cfg.id) if i.mac != mac])
+        return static_view(get_segment(cfg.id))
 
 
 # --- статус ----------------------------------------------------------------------------
+def segments_status() -> list[SegmentStatus]:
+    all_leases = leases()
+    out = []
+    for s in segments():
+        st = load_state(s.id)
+        out.append(SegmentStatus(config=s, bridge=s.bridge, active=segment_active(s),
+                                 ports=st.get("ports", []),
+                                 clients=sum(1 for l in all_leases if l.lan == s.id)))
+    return out
+
+
 def status() -> LanStatus:
-    cfg = get_config()
-    st = load_state()
+    from app.services import dhcp, dns
+    segs = segments()
+    cfg = segs[0]
     wan_if = wan_interface()
-    in_lan = set(st.get("ports", []))
+    in_seg = {p: s.id for s in segs for p in load_state(s.id).get("ports", [])}
 
     ports = []
-    for name in sorted(set(wan.candidates()) | in_lan):
+    for name in sorted(set(wan.candidates()) | set(in_seg)):
         info = netlink.link_info(name)
-        role = "wan" if name == wan_if else ("lan" if name in in_lan else "none")
-        ports.append(Port(name=name, role=role, **info))
+        role = "wan" if name == wan_if else ("lan" if name in in_seg else "none")
+        ports.append(Port(name=name, role=role, segment=in_seg.get(name), **info))
     ports.sort(key=lambda p: (p.role != "wan", p.name))
 
-    active = bool(st.get("address")) and (BRIDGE, st["address"]) in set(netlink.kernel_ipv4_addresses())
+    all_leases = leases()
     return LanStatus(
         config=cfg,
-        active=active,
+        active=segment_active(cfg),
         bridge=BRIDGE,
         wan_interface=wan_if,
         ports=ports,
-        dns_dhcp_running=dnsmasq_running(),
-        leases=leases(),
+        dns_dhcp_running=dhcp.running() or dns.running(),
+        leases=[l for l in all_leases if l.lan == "lan1"],
         static_leases=static_view(cfg),
+        segments=segments_status(),
     )
+
+
+def dhcp_status() -> DhcpStatus:
+    from app.services import dhcp
+    segs = segments()
+    views = []
+    for s in segs:
+        views.append(DhcpSegmentView(
+            id=s.id, name=s.name, bridge=s.bridge, enabled=s.enabled, address=s.address,
+            network=str(s.network), domain=s.domain, dns_enabled=s.dns_enabled,
+            settings=DhcpSettings(dhcp_enabled=s.dhcp_enabled, pool_start=s.pool_start, pool_end=s.pool_end,
+                                  lease_time=s.lease_time, dhcp_options=s.dhcp_options),
+            static_leases=static_view(s)))
+    need = any(s.enabled and s.dhcp_enabled for s in segs)
+    st = DhcpStatus(running=dhcp.running(), installed=dhcp.installed(), segments=views, leases=leases())
+    if need and not st.installed:
+        st.error = "нет Kea DHCP в образе — пересоберите образ (docker compose build)"
+    elif need and not st.running:
+        st.error = "Kea не запущен — см. docker logs"
+    return st

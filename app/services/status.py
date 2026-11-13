@@ -34,11 +34,12 @@ def _lan() -> dict:
     l = lan.status()
     lan_ports = [p for p in l.ports if p.role == "lan"]
     now = time.time()
-    active_leases = [x for x in l.leases if x.expires is None or x.expires > now]
+    active_leases = [x for x in lan.leases() if x.expires is None or x.expires > now]
     return {"enabled": l.config.enabled, "active": l.active, "address": l.config.address,
             "ports": len(lan_ports), "ports_up": sum(p.link_up for p in lan_ports),
             "dhcp": l.config.dhcp_enabled, "dns_dhcp_running": l.dns_dhcp_running,
-            "clients": len(active_leases), "static": len(l.static_leases)}
+            "clients": len(active_leases), "static": len(l.static_leases),
+            "segments": sum(1 for x in l.segments if x.config.enabled)}
 
 
 def _vpn() -> dict:
@@ -67,13 +68,15 @@ def _firewall() -> dict:
 def _traffic() -> list[dict]:
     from app.services import interfaces, lan, wan
     wan_if = (wan.load_state().get("interface") or None)
-    lan_ports = set(lan.load_state().get("ports", []))
+    segs = lan.segments()
+    bridges = {x.bridge for x in segs}
+    lan_ports = {p for x in segs for p in lan.load_state(x.id).get("ports", [])}
     vpn_ifaces = {"wg0", "awg0", "l2tp0"}
     out = []
     for i in interfaces.list_interfaces():
         if i.name == "lo":
             continue
-        role = ("wan" if i.name == wan_if else "lan" if i.name == lan.BRIDGE or i.name in lan_ports
+        role = ("wan" if i.name == wan_if else "lan" if i.name in bridges or i.name in lan_ports
                 else "vpn" if i.name in vpn_ifaces else "")
         out.append({"name": i.name, "role": role, "running": i.running,
                     "rx_bytes": i.rx_bytes, "tx_bytes": i.tx_bytes})
