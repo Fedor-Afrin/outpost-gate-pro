@@ -972,21 +972,36 @@ def _iface(named) -> str | None:
     return iface
 
 
+def _resolved(ctx, host: str, family: int | None = None) -> str:
+    """Имя -> адрес через DNS роутера (видны локальные имена: samba, samba.office.lan)."""
+    from app.services import tools
+    try:
+        ip, via = tools.resolve_sync(host, family)
+    except tools.ToolError as e:
+        raise CliError(f"failure: {e}") from e
+    if ip != host:
+        ctx.out(f"{host} -> {ip} ({via})")
+    return ip
+
+
 def ping(ctx, pos, named):
     host = _host(pos, named)
     count = int(named.get("count", 4))
-    cmd = ["ping", "-6" if ":" in host else "-4", "-n", "-c", str(max(1, min(count, 1000)))]
+    family = 6 if ":" in host else 4
+    ip = _resolved(ctx, host, family)
+    cmd = ["ping", f"-{family}", "-n", "-c", str(max(1, min(count, 1000)))]
     if iface := _iface(named):
         cmd += ["-I", iface]
-    _run_live(ctx, cmd + [host])
+    _run_live(ctx, cmd + [ip])
 
 
 def traceroute(ctx, pos, named):
     host = _host(pos, named)
+    ip = _resolved(ctx, host)
     cmd = ["traceroute", "-I", "-n", "-q", "1", "-w", "2", "-m", str(int(named.get("max-hops", 30)))]
     if iface := _iface(named):
         cmd += ["-i", iface]
-    _run_live(ctx, cmd + [host])
+    _run_live(ctx, cmd + [ip])
 
 
 def dns_lookup(ctx, pos, named):
@@ -995,9 +1010,23 @@ def dns_lookup(ctx, pos, named):
         raise CliError("dns-lookup name=example.com")
     r = ctx.api.get(f"/api/tools/dns?host={urllib.parse.quote(name)}")
     if r.get("error"):
-        raise CliError(f"failure: {r['error']}")
-    for a in r["addresses"]:
-        ctx.out(f"{r['host']}  {a}")
+        raise CliError(f"failure: {r['host']}: {r['error']}" + (f" [{r['server']}]" if r.get("server") else ""))
+    table(ctx, ["name", "address", "server", "time"],
+          [[r["host"], a, r.get("server"), f"{r['time_ms']}ms" if r.get("time_ms") is not None else None]
+           for a in r["addresses"]], numbered=False)
+
+
+def resolve_cmd(ctx, pos, named):
+    """:resolve samba — как в RouterOS: адрес имени через DNS роутера."""
+    name = named.get("domain-name") or (pos[0] if pos else "")
+    if not name:
+        raise CliError(":resolve domain-name=samba.office.lan")
+    from app.services import tools
+    try:
+        ip, _ = tools.resolve_sync(tools.check_host(name))
+    except tools.ToolError as e:
+        raise CliError(f"failure: {e}") from e
+    ctx.out(ip)
 
 
 def ip_scan(ctx, pos, named):
@@ -2188,11 +2217,13 @@ ROOT = Menu("OutpostGate Pro", {
     }),
     "ping": Cmd(ping, "ping 8.8.8.8 count=4 interface=wg0", ("address", "count", "interface"), IFACE),
     "traceroute": Cmd(traceroute, "traceroute 8.8.8.8", ("address", "max-hops", "interface"), IFACE),
+    "resolve": Cmd(resolve_cmd, "адрес имени через DNS роутера: :resolve samba | :resolve samba.office.lan",
+                   ("domain-name",)),
     "export": Cmd(export, "конфигурация командами (show-sensitive — с секретами; format=yaml — router.yaml)",
                   ("show-sensitive", "format"), {"show-sensitive": YESNO, "format": ["rsc", "yaml"]}),
     "quit": Cmd(quit_cmd, "выйти"),
 })
-GLOBAL = ("ping", "traceroute", "export", "quit", "password")      # работают из любого меню
+GLOBAL = ("ping", "traceroute", "resolve", "export", "quit", "password")      # работают из любого меню
 
 
 def node_at(path: list[str]) -> Menu:
@@ -2228,6 +2259,8 @@ def parse(line: str, cwd: list[str]) -> tuple[list[str], Cmd | None, list[str]]:
         tokens = shlex.split(line)
     except ValueError as e:
         raise CliError(f"syntax error ({e})") from e
+    if tokens and tokens[0].startswith(":") and len(tokens[0]) > 1:   # :resolve, :put — команды RouterOS
+        tokens[0] = tokens[0][1:]
     if tokens and tokens[0].startswith("/"):          # абсолютный путь: /ip address  или  /ip/address/print
         path = []
         rest = [p for p in tokens[0].split("/") if p] + tokens[1:]
