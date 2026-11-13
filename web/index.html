@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>OutpostGate Pro</title>
-  <link rel="stylesheet" href="css/style.css?v=0.17.1">
+  <link rel="stylesheet" href="css/style.css?v=0.17.2">
 </head>
 <body>
   <!-- вход -->
@@ -522,19 +522,33 @@
           <label class="check"><input type="checkbox" name="auto_ptr"> Обратная зона: PTR для A-записей автоматически</label>
           <p class="hint" id="zone-hint"></p>
 
-          <h3>Записи</h3>
-          <div class="table-scroll"><table class="compact edit-table">
-            <thead><tr><th>Имя</th><th>Тип</th><th>Значение</th><th>Приоритет</th><th>Вес</th><th>Порт</th><th>TTL</th><th>Комментарий</th><th></th></tr></thead>
-            <tbody id="zone-records"></tbody>
+          <h3>Имена в зоне</h3>
+          <div class="table-scroll"><table class="compact">
+            <thead><tr><th>Имя</th><th>Тип</th><th>Значение</th><th>Источник</th><th>Комментарий</th><th></th></tr></thead>
+            <tbody id="zone-names"></tbody>
           </table></div>
-          <button type="button" class="link" id="zone-record-add">+ Добавить запись</button>
-          <p class="hint">Имя: @ — сама зона, www — www.office.lan, полное имя — с точкой на конце. Для MX и SRV заполните приоритет, для SRV — вес и порт.</p>
+          <p class="hint">ns — имя DNS-сервера зоны (запись NS указывает на сам роутер), без него зона не работает. Имена из DHCP и router можно скрыть, свои записи — изменить или удалить.</p>
 
-          <h3>Добавлены автоматически</h3>
-          <table class="compact">
-            <thead><tr><th>Имя</th><th>Тип</th><th>Значение</th><th>Источник</th></tr></thead>
-            <tbody id="zone-auto"></tbody>
-          </table>
+          <div id="zone-rec-box" class="rec-box">
+            <h3 id="zone-rec-title">Новая запись</h3>
+            <div class="rec-form">
+              <label>Имя <input name="rec_name" size="14" placeholder="nas"></label>
+              <label>Тип <select name="rec_type"></select></label>
+              <label>Значение <input name="rec_value" size="22" placeholder="192.168.88.20"></label>
+              <label data-rec="priority">Приоритет <input name="rec_priority" type="number" min="0" class="narrow"></label>
+              <label data-rec="weight">Вес <input name="rec_weight" type="number" min="0" class="narrow"></label>
+              <label data-rec="port">Порт <input name="rec_port" type="number" min="0" max="65535" class="narrow"></label>
+              <label>TTL <input name="rec_ttl" type="number" min="0" class="narrow" placeholder="зоны"></label>
+              <label>Комментарий <input name="rec_comment" size="16"></label>
+            </div>
+            <div class="toolbar">
+              <button type="button" id="zone-rec-save">Добавить</button>
+              <button type="button" class="link" id="zone-rec-cancel" hidden>Отмена</button>
+              <span class="error" id="zone-rec-error"></span>
+              <span class="ok" id="zone-rec-ok"></span>
+            </div>
+            <p class="hint">Имя: @ — сама зона, www — www.office.lan, полное имя — с точкой на конце. Запись сохраняется сразу.</p>
+          </div>
 
           <div class="toolbar">
             <button type="submit">Сохранить зону</button>
@@ -1354,8 +1368,8 @@
 
   </main>
 
-  <script src="js/i18n-dict.js?v=0.17.1"></script>
-  <script src="js/i18n.js?v=0.17.1"></script>
-  <script src="js/app.js?v=0.17.1"></script>
+  <script src="js/i18n-dict.js?v=0.17.2"></script>
+  <script src="js/i18n.js?v=0.17.2"></script>
+  <script src="js/app.js?v=0.17.2"></script>
 </body>
 </html>

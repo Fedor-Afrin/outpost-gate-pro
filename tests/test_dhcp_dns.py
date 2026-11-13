@@ -141,6 +141,26 @@ def test_auto_names_and_ptr():
     assert not any(n == "5" for n, _ in ptr)                             # PTR 5 задан вручную
 
 
+def test_hidden_auto_names():
+    """Скрытые имена (DHCP, router) не попадают ни в зону, ни в обратную зону; ns скрыть нельзя."""
+    cfg = dns_cfg()
+    cfg.zones[0].hidden = ["Printer", "router"]
+    cfg = DnsConfig.model_validate(cfg.model_dump())
+    assert cfg.zones[0].hidden == ["printer", "router"]
+    segs = [seg()]
+    leases = [Lease(ip="192.168.88.21", mac="aa:aa:aa:aa:aa:02", hostname="printer"),
+              Lease(ip="192.168.88.23", mac="aa:aa:aa:aa:aa:05", hostname="nas")]
+    auto = dns.auto_names(cfg, segs, leases, {})
+    names = {(a.zone, a.name) for a in auto}
+    assert ("office.lan", "nas") in names and ("office.lan", "ns") in names
+    assert ("office.lan", "printer") not in names and ("office.lan", "router") not in names
+    assert not any(a.type == "PTR" and a.value.startswith("printer.") for a in auto)
+    body = dns.zone_file(cfg.zones[0], [a for a in auto if a.zone == "office.lan"], 1, "192.168.88.1")
+    assert "printer" not in body and "\nns IN A" in body
+    with pytest.raises(ValueError):
+        DnsZone(name="office.lan", hidden=["ns"])
+
+
 def test_named_conf_and_zone_files(tmp_path, monkeypatch):
     monkeypatch.setattr(dns, "zone_dir", lambda: tmp_path)
     cfg = dns_cfg()

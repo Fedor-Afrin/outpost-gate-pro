@@ -109,7 +109,7 @@ def auto_names(cfg: DnsConfig, segments=None, leases=None, static=None) -> list[
     for z in cfg.zones:
         if z.reverse:
             continue
-        taken = {r.name.lower() for r in z.records}
+        taken = {r.name.lower() for r in z.records} | set(z.hidden)
         used = set()
 
         def add(name: str, ip: str, source: str):
@@ -147,7 +147,7 @@ def auto_names(cfg: DnsConfig, segments=None, leases=None, static=None) -> list[
             if addr not in net:
                 continue
             label = ".".join(reversed(str(addr).split(".")[net.prefixlen // 8:]))
-            if label in explicit or label in seen:
+            if label in explicit or label in seen or label in z.hidden:
                 continue
             seen.add(label)
             fqdn = (zone if name == "@" else f"{name}.{zone}") + "."
