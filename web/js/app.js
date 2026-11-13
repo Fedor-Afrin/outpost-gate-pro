@@ -1718,8 +1718,8 @@ const TOOLS = {
   },
   dns: {
     fields: ["host"],
-    hint: "Разрешение имени через DNS роутера — так же, как его видят устройства LAN (через туннель, если VPN «весь трафик»).",
-    cols: ["Имя", "Адреса", "Время"],
+    hint: "Разрешение имени через DNS роутера (BIND) — так же, как его видят устройства LAN. Короткое имя (samba) дополняется доменом сегмента. Ping и traceroute тоже находят локальные имена.",
+    cols: ["Имя", "Адреса", "Сервер", "Время"],
   },
   neighbors: {
     fields: [],
@@ -1840,7 +1840,7 @@ async function runTool() {
     try {
       const d = await api("GET", `/api/tools/dns?host=${encodeURIComponent(f.host.value)}`);
       $("#tool-rows").innerHTML = `<tr><td>${esc(d.host)}</td><td>${d.error ? `<span class="flag-x">${esc(d.error)}</span>`
-        : d.addresses.map(esc).join("<br>")}</td><td>${ms(d.time_ms)}</td></tr>`;
+        : d.addresses.map(esc).join("<br>")}</td><td>${esc(d.server || "")}</td><td>${ms(d.time_ms)}</td></tr>`;
     } catch (e) { $("#tool-error").textContent = e.message; }
     return;
   }
