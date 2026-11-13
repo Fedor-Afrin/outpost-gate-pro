@@ -25,6 +25,7 @@ class WanConfig(BaseModel):
     address: str | None = Field(None, examples=["203.0.113.10/24"])
     gateway: str | None = Field(None, examples=["203.0.113.1"])
     dns: list[str] = Field(default_factory=list, max_length=3, examples=[["1.1.1.1", "8.8.8.8"]])
+    vlan_id: int | None = Field(None, ge=1, le=4094, description="VLAN провайдера: WAN идёт с этим тегом")
 
     @field_validator("address")
     @classmethod
@@ -71,6 +72,8 @@ class WanConfig(BaseModel):
             data["gateway"] = self.gateway
         if self.dns:
             data["dns"] = self.dns
+        if self.vlan_id:
+            data["vlan_id"] = self.vlan_id
         return data
 
 

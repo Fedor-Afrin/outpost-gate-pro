@@ -120,6 +120,8 @@
         </div>
         <label class="row">Предпочитаемый DNS <input name="dns1" placeholder="1.1.1.1"></label>
         <label class="row">Альтернативный DNS <input name="dns2" placeholder="8.8.8.8"></label>
+        <label class="row">VLAN провайдера <input name="vlan_id" type="number" min="1" max="4094" placeholder="без VLAN"></label>
+        <p class="hint">Заполняйте, только если провайдер требует тег 802.1Q (например, VLAN 100 на оптическом терминале). Роутер создаст интерфейс вида eth0.100.</p>
         <p class="hint">В режиме DHCP поля DNS можно оставить пустыми — тогда используются DNS провайдера.</p>
 
         <div class="toolbar">
@@ -143,7 +145,7 @@
           <div><span class="label">Клиенты DHCP</span><span id="ls-clients">—</span></div>
         </div>
         <table class="compact">
-          <thead><tr><th>Порт</th><th>Роль</th><th>Сегмент</th><th>Линк</th><th>MAC</th></tr></thead>
+          <thead><tr><th>Порт</th><th>Роль</th><th>Сегмент</th><th>VLAN (с тегом)</th><th>Линк</th><th>MAC</th></tr></thead>
           <tbody id="lan-ports"></tbody>
         </table>
       </div>
@@ -159,6 +161,13 @@
           <label class="check" id="lan-auto-label"><input type="checkbox" name="ports_auto"> Все свободные порты, кроме WAN</label>
           <div id="lan-port-list" class="port-list"></div>
         </div>
+
+        <h2>VLAN (802.1Q)</h2>
+        <label class="row">VLAN ID <input name="vlan_id" type="number" min="1" max="4094" placeholder="без VLAN"></label>
+        <div class="row-block"><span>Порты с тегом (trunk)</span>
+          <div id="lan-trunk-list" class="port-list"></div>
+        </div>
+        <p class="hint">Сегмент придёт на отмеченные порты с тегом VLAN — к ним подключается управляемый коммутатор или точка доступа. Тот же порт может одновременно нести основной LAN без тега (native VLAN). Один порт и несколько VLAN — так делается «роутер на палочке».</p>
 
         <h2>DNS и домен</h2>
         <label class="check"><input type="checkbox" name="dns_enabled"> Роутер — DNS-сервер для этого сегмента</label>

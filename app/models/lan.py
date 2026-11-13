@@ -180,6 +180,20 @@ class LanConfig(BaseModel):
     domain: str | None = Field("office.lan", description="Домен сегмента: имена устройств из DHCP попадают в эту зону")
     forward_to: list[str] = Field(default_factory=list, description="В какие сегменты разрешён транзит из этого")
     dhcp_options: DhcpOptions = Field(default_factory=DhcpOptions)
+    vlan_id: int | None = Field(None, ge=1, le=4094, description="802.1Q: сегмент приходит с этим тегом на trunk-порты")
+    trunk_ports: list[str] = Field(default_factory=list, description="Порты, где сегмент идёт с тегом vlan_id")
+
+    @field_validator("trunk_ports")
+    @classmethod
+    def _trunks(cls, v: list[str]) -> list[str]:
+        out = []
+        for p in v:
+            p = p.strip()
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,15}", p):
+                raise ValueError(f"неверный порт '{p}' (VLAN ставится на физический порт, например eth1)")
+            if p not in out:
+                out.append(p)
+        return out
 
     @field_validator("id")
     @classmethod
@@ -268,6 +282,8 @@ class LanConfig(BaseModel):
     def _self_forward(self):
         if self.id in self.forward_to:
             raise ValueError("сегмент не может пересылать сам в себя")
+        if self.trunk_ports and not self.vlan_id:
+            raise ValueError(f"{self.name}: для тегированных портов укажите VLAN ID")
         return self
 
     def to_yaml(self) -> tuple[dict, dict]:
@@ -286,6 +302,8 @@ class LanConfig(BaseModel):
                 "options": self.dhcp_options.model_dump(exclude_defaults=True),
             },
         }
+        if self.vlan_id:
+            lan["vlan"] = {"id": self.vlan_id, "trunk-ports": self.trunk_ports}
         if self.id != "lan1":
             lan = {"id": self.id, **lan}
         return lan, {"wan-management": self.wan_management}
@@ -311,6 +329,8 @@ class LanConfig(BaseModel):
             dns_enabled=lan.get("dns", True),
             domain=lan.get("domain", "office.lan") if "domain" in lan or sid == "lan1" else None,
             forward_to=list(lan.get("forward-to") or []),
+            vlan_id=(lan.get("vlan") or {}).get("id"),
+            trunk_ports=list((lan.get("vlan") or {}).get("trunk-ports") or []),
             dhcp_options=DhcpOptions.model_validate(dhcp.get("options") or {}),
         )
 
@@ -320,7 +340,8 @@ class Port(BaseModel):
     mac: str | None = None
     link_up: bool = False
     role: str            # wan / lan / none
-    segment: str | None = None   # lan1, lan2… — в каком сегменте порт
+    segment: str | None = None   # lan1, lan2… — в каком сегменте порт (без тега)
+    vlans: list[str] = []        # «10 (Guests)» — сегменты, которые идут через порт с тегом
 
 
 class Lease(BaseModel):

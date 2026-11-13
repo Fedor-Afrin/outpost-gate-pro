@@ -80,6 +80,24 @@ def bridge_create(name: str, mac: str | None = None) -> None:
             ipr.link("set", index=_index(ipr, name), address=mac)
 
 
+def vlan_name(parent: str, vid: int) -> str:
+    """eth1 + 10 -> eth1.10 (имя интерфейса в Linux — не длиннее 15 символов)."""
+    suffix = f".{vid}"
+    return parent[: 15 - len(suffix)] + suffix
+
+
+def vlan_create(name: str, parent: str, vid: int) -> None:
+    """ip link add link <parent> name <name> type vlan id <vid>."""
+    from pyroute2 import NetlinkError
+    with _ipr() as ipr:
+        if ipr.link_lookup(ifname=name):
+            return
+        try:
+            ipr.link("add", ifname=name, kind="vlan", link=_index(ipr, parent), vlan_id=vid)
+        except NetlinkError as e:
+            raise NetlinkOpError(f"не удалось создать VLAN {vid} на {parent}: {e}") from e
+
+
 def link_delete(name: str) -> None:
     with _ipr() as ipr:
         idx = ipr.link_lookup(ifname=name)

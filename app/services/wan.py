@@ -77,6 +77,11 @@ def cleanup(state: dict) -> None:
             netlink.addr_del(ifname, state["address"])
         except netlink.NetlinkOpError as e:
             print(f"[wan] WARNING: {e}")
+    if state.get("vlan"):            # WAN на VLAN провайдера: интерфейс создавал роутер
+        try:
+            netlink.link_delete(state["vlan"])
+        except netlink.NetlinkOpError as e:
+            print(f"[wan] WARNING: {e}")
 
 
 # --- вышестоящие DNS (forwarders для BIND в LAN) ----------------------------------------
@@ -136,7 +141,8 @@ def current_gateway() -> str | None:
 
 # --- интерфейс ------------------------------------------------------------------
 def candidates() -> list[str]:
-    return sorted(n for n in netlink.link_names() if not n.startswith(NOT_WAN))
+    """Физические порты: без мостов, туннелей и VLAN-интерфейсов (eth1.10)."""
+    return sorted(n for n in netlink.link_names() if not n.startswith(NOT_WAN) and "." not in n)
 
 
 def detect_interface() -> str | None:
@@ -218,6 +224,12 @@ def apply(cfg: WanConfig) -> None:
         cleanup(load_state())
         ifname = resolve_interface(cfg)
         state: dict = {"interface": ifname, "mode": cfg.mode, "state": cfg.mode}
+        if cfg.vlan_id and cfg.mode != "none":
+            base, ifname = ifname, netlink.vlan_name(ifname, cfg.vlan_id)
+            netlink.link_set_up(base)
+            netlink.vlan_create(ifname, base, cfg.vlan_id)
+            state.update(interface=ifname, base=base, vlan=ifname)
+            save_state(state)
 
         if cfg.mode == "static":
             netlink.link_set_up(ifname)

@@ -291,6 +291,22 @@ def bridge_print(ctx, pos, named):
           flags=["R" if s["active"] else "X" for s in segs], legend="R - running, X - disabled")
 
 
+def vlan_print(ctx, pos, named):
+    """/interface vlan print — VLAN сегментов LAN и VLAN провайдера на WAN."""
+    rows, flags = [], []
+    w = ctx.api.get("/api/wan")
+    if w["config"].get("vlan_id"):
+        base = w["config"]["interface"]
+        rows.append([w.get("interface") or f'{base}.{w["config"]["vlan_id"]}', w["config"]["vlan_id"], base, "WAN"])
+        flags.append("R" if w.get("interface") else "")
+    for sg in _segments(ctx):
+        c = sg["config"]
+        for p in c.get("trunk_ports") or []:
+            rows.append([f'{p}.{c["vlan_id"]}', c["vlan_id"], p, f'{c.get("name")} ({sg["bridge"]})'])
+            flags.append("R" if sg["active"] else "X")
+    table(ctx, ["name", "vlan-id", "interface", "segment"], rows, flags=flags, legend="R - running, X - disabled")
+
+
 def bridge_port_print(ctx, pos, named):
     lan = ctx.api.get("/api/lan")
     bridges = {s["config"].get("id", "lan1"): s["bridge"] for s in _segments(ctx)}
@@ -1492,7 +1508,8 @@ ROOT = Menu("OutpostGate Pro", {
         "monitor-traffic": Cmd(monitor_traffic, "скорость интерфейса: monitor-traffic eth0 (Ctrl-C — стоп)",
                                ("interface", "once"), {**IFACE, "once": YESNO}),
         "ethernet": Menu("физические порты", {"print": pr(interface_print)}),
-        "bridge": Menu("мост LAN", {"print": pr(bridge_print), "port": Menu("порты моста", {"print": pr(bridge_port_print)})}),
+        "bridge": Menu("мосты сегментов LAN", {"print": pr(bridge_print), "port": Menu("порты моста", {"print": pr(bridge_port_print)})}),
+        "vlan": Menu("VLAN 802.1Q (настройка — во вкладках LAN и WAN)", {"print": pr(vlan_print)}),
         "wireguard": Menu("WireGuard / AmneziaWG", {"print": pr(wireguard_print),
                                                     "peers": Menu("сервер", {"print": pr(wireguard_peers_print)})}),
         "l2tp-client": Menu("L2TP/IPsec", {"print": pr(l2tp_client_print)}),
