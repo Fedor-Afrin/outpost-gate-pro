@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>OutpostGate Pro</title>
-  <link rel="stylesheet" href="css/style.css?v=0.15.0">
+  <link rel="stylesheet" href="css/style.css?v=0.16.0">
 </head>
 <body>
   <!-- вход -->
@@ -197,7 +197,13 @@
     <!-- WAN -->
     <section id="page-wan" class="page">
       <h1>WAN</h1>
+      <div class="tabs" id="wan-tabs">
+        <a class="tab" data-tab="wan1">WAN1</a>
+        <a class="tab" data-tab="wan2">WAN2 — второй провайдер</a>
+        <a class="tab" data-tab="multi">Резерв и балансировка</a>
+      </div>
 
+      <div id="wan-p-wan1">
       <div class="card" id="wan-status">
         <div class="status-grid">
           <div><span class="label">Интерфейс</span><span id="ws-iface">—</span></div>
@@ -240,6 +246,85 @@
           <span id="wan-ok" class="ok"></span>
         </div>
       </form>
+      </div>
+
+      <div id="wan-p-wan2">
+        <div class="card">
+          <div class="status-grid">
+            <div><span class="label">Интерфейс</span><span id="w2-iface">—</span></div>
+            <div><span class="label">Линк</span><span id="w2-link">—</span></div>
+            <div><span class="label">Состояние</span><span id="w2-state">—</span></div>
+            <div><span class="label">IP-адрес</span><span id="w2-addr">—</span></div>
+            <div><span class="label">Шлюз</span><span id="w2-gw">—</span></div>
+            <div><span class="label">DNS</span><span id="w2-dns">—</span></div>
+          </div>
+          <button id="wan2-renew" type="button" hidden>Обновить аренду DHCP</button>
+        </div>
+        <form id="wan2-form" class="card form">
+          <h2>Второй провайдер</h2>
+          <label class="check"><input type="checkbox" name="enabled"> Включить WAN2</label>
+          <label class="row">Порт WAN2 <select name="interface" id="wan2-iface"></select></label>
+          <fieldset class="modes">
+            <label><input type="radio" name="mode" value="dhcp"> Получить автоматически (DHCP)</label>
+            <label><input type="radio" name="mode" value="static"> Настроить вручную</label>
+          </fieldset>
+          <div id="wan2-static">
+            <label class="row">IP-адрес / маска <input name="address" placeholder="100.64.5.7/24"></label>
+            <label class="row">Шлюз <input name="gateway" placeholder="100.64.5.1"></label>
+          </div>
+          <label class="row">Предпочитаемый DNS <input name="dns1" placeholder="1.1.1.1"></label>
+          <label class="row">Альтернативный DNS <input name="dns2" placeholder="8.8.8.8"></label>
+          <label class="row">VLAN провайдера <input name="vlan_id" type="number" min="1" max="4094" placeholder="без VLAN"></label>
+          <p class="hint">Второй провайдер, LTE-роутер или USB-модем HiLink (он виден как сетевая карта). Порт WAN2 не может быть портом LAN: если он сейчас в сегменте, сначала уберите его там. Как делить трафик между WAN1 и WAN2 — во вкладке «Резерв и балансировка».</p>
+          <div class="toolbar">
+            <button type="submit">Применить</button>
+            <span id="wan2-error" class="error"></span>
+            <span id="wan2-ok" class="ok"></span>
+          </div>
+        </form>
+      </div>
+
+      <div id="wan-p-multi">
+        <div class="card wide">
+          <h2>Каналы</h2>
+          <p class="hint" id="mw-off" hidden>Второй провайдер выключен — включите его во вкладке WAN2.</p>
+          <table class="compact">
+            <thead><tr><th>Канал</th><th>Интерфейс</th><th>Адрес</th><th>Шлюз</th><th>Проверка связи</th><th class="num">Задержка</th><th>Трафик</th><th>С какого времени</th></tr></thead>
+            <tbody id="mw-wans"></tbody>
+          </table>
+          <h3>Переключения</h3>
+          <table class="compact">
+            <thead><tr><th>Время</th><th>Событие</th><th>Трафик через</th></tr></thead>
+            <tbody id="mw-events"></tbody>
+          </table>
+        </div>
+        <form id="mw-form" class="card form">
+          <h2>Как работать с двумя провайдерами</h2>
+          <fieldset class="modes">
+            <label><input type="radio" name="mode" value="failover"> Резерв — весь трафик через основной; упал — через запасной</label>
+            <label><input type="radio" name="mode" value="balance"> Балансировка — оба канала сразу, соединения делятся по весам</label>
+          </fieldset>
+          <div id="mw-failover">
+            <label class="row">Основной канал <select name="primary"><option value="wan1">WAN1</option><option value="wan2">WAN2</option></select></label>
+          </div>
+          <div id="mw-balance">
+            <label class="row">Вес WAN1 <input name="weight1" type="number" min="1" max="10"></label>
+            <label class="row">Вес WAN2 <input name="weight2" type="number" min="1" max="10"></label>
+            <p class="hint">Например, 3 и 1 — три новых соединения из четырёх идут через WAN1. Одно соединение всегда идёт через один канал; устройство, открывающее сайт, обычно остаётся на одном канале — банки и VPN не ломаются. Упал канал — все соединения идут через живой.</p>
+          </div>
+          <h3>Проверка связи</h3>
+          <label class="row">Адреса для ping <input name="check_targets" placeholder="1.1.1.1, 8.8.8.8"></label>
+          <label class="row">Проверять каждые, с <input name="interval" type="number" min="2" max="60"></label>
+          <label class="row">Упал после неудач подряд <input name="fail_after" type="number" min="1" max="20"></label>
+          <label class="row">Вернулся после удач подряд <input name="recover_after" type="number" min="1" max="60"></label>
+          <p class="hint">Роутер пингует эти адреса через каждый канал отдельно; канал жив, если ответил хоть один. При падении канала его соединения сбрасываются — клиенты сразу переподключаются через живой. Когда основной возвращается, начатые через запасной загрузки и звонки не рвутся: новые соединения идут через основной.</p>
+          <div class="toolbar">
+            <button type="submit">Применить</button>
+            <span id="mw-error" class="error"></span>
+            <span id="mw-ok" class="ok"></span>
+          </div>
+        </form>
+      </div>
     </section>
 
     <!-- LAN: сегменты -->
@@ -387,6 +472,7 @@
 
       <div class="card wide">
         <h2>Устройства (DHCP-аренды)</h2>
+        <p><span id="dh-wol-ok" class="ok"></span><span id="dh-wol-error" class="error"></span></p>
         <table class="compact">
           <thead><tr><th>Имя</th><th>IP</th><th>MAC</th><th>Производитель</th><th>Аренда до</th><th></th></tr></thead>
           <tbody id="lan-leases"></tbody>
@@ -984,6 +1070,24 @@
         <a class="tab" data-tool="dns">DNS</a>
         <a class="tab" data-tool="neighbors">Соседи (ARP)</a>
         <a class="tab" data-tool="scan">Сканер сети</a>
+        <a class="tab" data-tool="wol">Wake-on-LAN</a>
+      </div>
+
+      <div id="wol-panel" hidden>
+        <form id="wol-form" class="card form">
+          <h2>Разбудить компьютер</h2>
+          <label class="row">MAC-адрес <input name="mac" placeholder="3c:52:82:aa:bb:cc" required></label>
+          <label class="row">Сегмент <select name="lan" id="wol-lan"><option value="">где устройство получало адрес</option></select></label>
+          <div class="toolbar"><button type="submit">Разбудить</button><span id="wol-ok" class="ok"></span><span id="wol-error" class="error"></span></div>
+          <p class="hint">Роутер отправляет «магический пакет» (6 байт FF и 16 раз MAC) в сегмент LAN. Компьютер проснётся, если Wake-on-LAN включён в BIOS/UEFI и в настройках сетевой карты, а питание на неё подаётся (кабель вставлен).</p>
+        </form>
+        <div class="card wide">
+          <h2>Известные устройства</h2>
+          <table class="compact">
+            <thead><tr><th>Имя</th><th>IP</th><th>MAC</th><th>Сегмент</th><th></th></tr></thead>
+            <tbody id="wol-devices"></tbody>
+          </table>
+        </div>
       </div>
 
       <form id="tool-form" class="card tool-form">
@@ -1024,6 +1128,35 @@
         <a class="tab" data-tab="users">Пользователи</a>
         <a class="tab" data-tab="backup">Резервные копии</a>
         <a class="tab" data-tab="audit">Журнал</a>
+        <a class="tab" data-tab="ntp">Время (NTP)</a>
+      </div>
+
+      <div data-panel="ntp">
+        <div class="card">
+          <div class="status-grid">
+            <div><span class="label">Время роутера</span><span id="ntp-time">—</span></div>
+            <div><span class="label">Синхронизация</span><span id="ntp-sync">—</span></div>
+            <div><span class="label">Источник</span><span id="ntp-ref">—</span></div>
+            <div><span class="label">Расхождение</span><span id="ntp-offset">—</span></div>
+            <div><span class="label">Stratum</span><span id="ntp-stratum">—</span></div>
+            <div><span class="label">Раздаёт в LAN</span><span id="ntp-serving">—</span></div>
+          </div>
+          <p class="error" id="ntp-error"></p>
+          <p class="hint" id="ntp-clock"></p>
+          <table class="compact">
+            <thead><tr><th></th><th>Сервер</th><th class="num">Stratum</th><th class="num">Ответы (из 8)</th><th class="num">Смещение</th></tr></thead>
+            <tbody id="ntp-sources"></tbody>
+          </table>
+        </div>
+        <form id="ntp-form" class="card form">
+          <h2>Настройки</h2>
+          <label class="check"><input type="checkbox" name="enabled"> Включить NTP (chrony)</label>
+          <label class="row">Серверы времени <input name="servers" placeholder="pool.ntp.org, time.google.com"></label>
+          <label class="check"><input type="checkbox" name="serve_lan"> Раздавать время устройствам LAN</label>
+          <label class="check"><input type="checkbox" name="orphan"> Раздавать, даже когда нет связи с серверами</label>
+          <p class="hint">Устройства LAN получат адрес роутера как сервер времени по DHCP (опция 42), если в DHCP сегмента не заданы свои NTP-серверы. Порт 123 открыт только для LAN.</p>
+          <div class="toolbar"><button type="submit">Применить</button><span id="ntp-ok" class="ok"></span><span id="ntp-form-error" class="error"></span></div>
+        </form>
       </div>
 
       <div data-panel="overview">
@@ -1100,8 +1233,8 @@
 
   </main>
 
-  <script src="js/i18n-dict.js?v=0.15.0"></script>
-  <script src="js/i18n.js?v=0.15.0"></script>
-  <script src="js/app.js?v=0.15.0"></script>
+  <script src="js/i18n-dict.js?v=0.16.0"></script>
+  <script src="js/i18n.js?v=0.16.0"></script>
+  <script src="js/app.js?v=0.16.0"></script>
 </body>
 </html>

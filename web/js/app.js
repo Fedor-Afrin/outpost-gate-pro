@@ -59,6 +59,9 @@ async function loadStatus() {
         ["Адрес", w.addresses.map(esc).join(", ") || "—"],
         ["Шлюз", esc(w.gateway ?? "—")],
         ["DNS", esc(w.dns.join(", ") || "—")],
+        ...(w.wans ?? []).map((x) => [x.name, `${esc(x.interface ?? "—")} · ${x.healthy === false ? I18N.t("нет связи")
+          : x.healthy ? I18N.t("работает") : "…"}${x.active ? " · " + I18N.t("трафик") : ""}`]),
+        w.wans?.length ? ["Режим двух WAN", w.multi_mode === "balance" ? "балансировка" : "резерв"] : null,
       ], "wan");
 
   const vpnName = { wireguard: "WireGuard", amneziawg: "AmneziaWG", l2tp: "L2TP/IPsec" };
@@ -140,7 +143,21 @@ function fillWanForm(w) {
   wanModeChanged();
 }
 
+let wanTab = "wan1";
+let wan2FormLoaded = false;
+let mwFormLoaded = false;
+
+function selectWanTab(tab) {
+  wanTab = tab;
+  document.querySelectorAll("#wan-tabs .tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === tab));
+  for (const t of ["wan1", "wan2", "multi"]) $(`#wan-p-${t}`).hidden = t !== tab;
+  if (location.hash === "#wan") loadWan().catch(console.error);
+}
+$("#wan-tabs").addEventListener("click", (ev) => { const t = ev.target.closest(".tab"); if (t) selectWanTab(t.dataset.tab); });
+
 async function loadWan() {
+  if (wanTab === "wan2") return loadWan2();
+  if (wanTab === "multi") return loadMultiWan();
   const w = await api("GET", "/api/wan");
   $("#ws-iface").textContent = w.interface ?? "не найден";
   $("#ws-link").innerHTML = w.link_up ? '<span class="flag-r">есть</span>' : '<span class="flag-x">нет кабеля</span>';
@@ -177,6 +194,120 @@ $("#wan-form").addEventListener("submit", async (ev) => {
   } catch (e) {
     $("#wan-error").textContent = e.message;
   }
+});
+
+// --- WAN2: второй провайдер
+function wan2ModeChanged() {
+  const mode = $("#wan2-form").querySelector("input[name=mode]:checked")?.value;
+  $("#wan2-static").hidden = mode !== "static";
+}
+$("#wan2-form").addEventListener("change", (ev) => { if (ev.target.name === "mode") wan2ModeChanged(); });
+
+function fillWan2Form(w) {
+  const f = $("#wan2-form"), c = w.config;
+  const opts = [...w.interfaces];
+  if (c.interface && !opts.includes(c.interface)) opts.push(c.interface);
+  $("#wan2-iface").innerHTML = '<option value="">—</option>' + opts.map((n) =>
+    `<option value="${esc(n)}" ${n === c.interface ? "selected" : ""}>${esc(n)}</option>`).join("");
+  f.enabled.checked = !!c.enabled;
+  const mode = c.mode === "static" ? "static" : "dhcp";
+  f.querySelector(`input[name=mode][value=${mode}]`).checked = true;
+  f.address.value = c.address ?? "";
+  f.gateway.value = c.gateway ?? "";
+  f.dns1.value = c.dns[0] ?? "";
+  f.dns2.value = c.dns[1] ?? "";
+  f.vlan_id.value = c.vlan_id ?? "";
+  wan2ModeChanged();
+}
+
+async function loadWan2() {
+  const w = await api("GET", "/api/wan/wan2");
+  const on = !!w.config.enabled;
+  $("#w2-iface").textContent = on ? (w.interface ?? "—") : "выключен";
+  $("#w2-link").innerHTML = !on ? "—" : w.link_up ? '<span class="flag-r">есть</span>' : '<span class="flag-x">нет кабеля</span>';
+  $("#w2-state").textContent = on ? (STATE_TEXT[w.dhcp_state] ?? (w.dhcp_state || "—")) : "—";
+  $("#w2-addr").innerHTML = on && w.addresses.length ? w.addresses.map(esc).join("<br>") : "—";
+  $("#w2-gw").textContent = on ? (w.gateway ?? "—") : "—";
+  $("#w2-dns").textContent = on && w.dns.length ? w.dns.join(", ") : "—";
+  $("#wan2-renew").hidden = !w.dhcp_running;
+  if (!wan2FormLoaded) { fillWan2Form(w); wan2FormLoaded = true; }
+}
+
+$("#wan2-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const f = new FormData(ev.target);
+  const mode = f.get("mode");
+  $("#wan2-error").textContent = ""; $("#wan2-ok").textContent = "";
+  try {
+    const w = await api("PUT", "/api/wan/wan2", {
+      enabled: ev.target.enabled.checked, interface: f.get("interface") || "", mode,
+      address: mode === "static" ? f.get("address") || null : null,
+      gateway: mode === "static" ? f.get("gateway") || null : null,
+      dns: [f.get("dns1"), f.get("dns2")].filter(Boolean),
+      vlan_id: f.get("vlan_id") ? Number(f.get("vlan_id")) : null,
+    });
+    fillWan2Form(w);
+    $("#wan2-ok").textContent = "Применено";
+    await loadWan2();
+  } catch (e) { $("#wan2-error").textContent = e.message; }
+});
+
+$("#wan2-renew").addEventListener("click", async () => {
+  try { await api("POST", "/api/wan/wan2/renew"); await loadWan2(); }
+  catch (e) { $("#wan2-error").textContent = e.message; }
+});
+
+// --- два провайдера: резерв или балансировка
+function mwModeChanged() {
+  const mode = $("#mw-form").querySelector("input[name=mode]:checked")?.value;
+  $("#mw-failover").hidden = mode !== "failover";
+  $("#mw-balance").hidden = mode !== "balance";
+}
+$("#mw-form").addEventListener("change", (ev) => { if (ev.target.name === "mode") mwModeChanged(); });
+
+function fillMwForm(c) {
+  const f = $("#mw-form");
+  f.querySelector(`input[name=mode][value=${c.mode}]`).checked = true;
+  f.primary.value = c.primary;
+  f.weight1.value = c.weight1; f.weight2.value = c.weight2;
+  f.check_targets.value = c.check_targets.join(", ");
+  f.interval.value = c.interval; f.fail_after.value = c.fail_after; f.recover_after.value = c.recover_after;
+  mwModeChanged();
+}
+
+const mwCheck = (h) => (h === true ? '<span class="dot ok"></span> есть' : h === false ? '<span class="dot bad"></span> нет связи' : "—");
+
+async function loadMultiWan() {
+  const d = await api("GET", "/api/wan/multiwan");
+  $("#mw-off").hidden = d.enabled;
+  const rows = d.wans.filter((w) => w.enabled);
+  $("#mw-wans").innerHTML = rows.map((w) => `<tr><td><b>${esc(w.name)}</b></td><td>${dash(w.interface)}</td>
+    <td>${dash(w.address)}</td><td>${dash(w.gateway)}</td><td>${d.enabled ? mwCheck(w.healthy) : "—"}</td>
+    <td class="num">${w.rtt != null ? esc(I18N.t("{v} мс", { v: w.rtt })) : "—"}</td>
+    <td>${w.active ? '<span class="badge lan">активный</span>' : d.enabled ? '<span class="badge port">запасной</span>' : "—"}</td>
+    <td>${w.since ? new Date(w.since * 1000).toLocaleString(I18N.locale()) : "—"}</td></tr>`).join("");
+  $("#mw-events").innerHTML = d.events.map((e) => `<tr><td>${new Date(e.time * 1000).toLocaleString(I18N.locale())}</td>
+    <td>${esc(e.wan.toUpperCase())} — ${e.state === "down" ? "упал" : "вернулся"}</td>
+    <td>${esc(e.active.map((x) => x.toUpperCase()).join(", ") || "—")}</td></tr>`).join("")
+    || '<tr><td colspan="3" class="hint">переключений не было</td></tr>';
+  if (!mwFormLoaded) { fillMwForm(d.config); mwFormLoaded = true; }
+}
+
+$("#mw-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const f = ev.target;
+  $("#mw-error").textContent = ""; $("#mw-ok").textContent = "";
+  try {
+    const d = await api("PUT", "/api/wan/multiwan", {
+      mode: f.querySelector("input[name=mode]:checked").value, primary: f.primary.value,
+      weight1: Number(f.weight1.value), weight2: Number(f.weight2.value),
+      check_targets: f.check_targets.value.split(/[\s,;]+/).filter(Boolean),
+      interval: Number(f.interval.value), fail_after: Number(f.fail_after.value), recover_after: Number(f.recover_after.value),
+    });
+    fillMwForm(d.config);
+    $("#mw-ok").textContent = "Применено";
+    await loadMultiWan();
+  } catch (e) { $("#mw-error").textContent = e.message; }
 });
 
 $("#wan-renew").addEventListener("click", async () => {
@@ -356,7 +487,8 @@ function renderStatic(list) {
   $("#static-leases").innerHTML = list.map((x) => `
     <tr class="${x.valid ? "" : "row-inactive"}"><td>${esc(x.name ?? "—")}</td><td>${esc(x.ip)}</td><td>${esc(x.mac)}</td>
       <td>${!x.valid ? "вне сети LAN — не работает" : x.in_pool ? "внутри пула DHCP" : ""}</td>
-      <td class="actions"><button type="button" data-unpin="${esc(x.mac)}" class="danger">Открепить</button></td></tr>`).join("")
+      <td class="actions"><button type="button" data-wol="${esc(x.mac)}">Разбудить</button>
+        <button type="button" data-unpin="${esc(x.mac)}" class="danger">Открепить</button></td></tr>`).join("")
     || '<tr><td colspan="5" class="hint">нет</td></tr>';
 }
 
@@ -379,11 +511,25 @@ async function loadDhcp() {
     <tr><td>${esc(x.name ?? x.hostname ?? "—")}</td><td>${esc(x.ip)}</td><td>${esc(x.mac)}</td>
         <td>${esc(x.vendor ?? "—")}</td>
         <td>${x.expires ? new Date(x.expires * 1000).toLocaleString(I18N.locale()) : "бессрочно"}</td>
-        <td class="actions">${x.static ? '<span class="badge lan">закреплён</span>'
+        <td class="actions"><button type="button" data-wol="${esc(x.mac)}">Разбудить</button>
+          ${x.static ? '<span class="badge lan">закреплён</span>'
           : `<button type="button" data-pin="${esc(x.mac)}" data-ip="${esc(x.ip)}" data-name="${esc(x.hostname ?? "")}">Закрепить</button>`}</td></tr>`).join("")
     || '<tr><td colspan="6" class="hint">пока никого</td></tr>';
   if (dhcpFormFor !== dhcpSeg) fillDhcpForm(seg);
 }
+
+// Wake-on-LAN из списков DHCP
+async function wakeUp(mac, lanId, okBox, errBox) {
+  okBox.textContent = ""; errBox.textContent = "";
+  try {
+    const r = await api("POST", "/api/tools/wol", { mac, lan: lanId || null });
+    okBox.textContent = I18N.t("Пакет пробуждения отправлен на {mac} ({where})", { mac: r.mac, where: r.sent.map((x) => x.name).join(", ") });
+  } catch (e) { errBox.textContent = e.message; }
+}
+document.querySelector("#page-dhcp").addEventListener("click", (ev) => {
+  const b = ev.target.closest("button[data-wol]");
+  if (b) wakeUp(b.dataset.wol, dhcpSeg, $("#dh-wol-ok"), $("#dh-wol-error"));
+});
 
 $("#dhcp-tabs").addEventListener("click", (ev) => {
   const t = ev.target.closest(".tab");
@@ -1513,6 +1659,15 @@ function toolBusy(busy) {
 
 async function selectTool(name) {
   if (toolWs) toolWs.close();
+  const isWol = name === "wol";
+  $("#wol-panel").hidden = !isWol;
+  for (const sel of ["#tool-form", ".tool-result"]) document.querySelector(`#page-tools ${sel}`).hidden = isWol;
+  if (isWol) {
+    $("#tool-summary").hidden = true;
+    document.querySelectorAll("#tool-tabs .tab").forEach((x) => x.classList.toggle("active", x.dataset.tool === name));
+    tool = name;
+    return loadWolDevices();
+  }
   tool = name;
   const t = TOOLS[name];
   document.querySelectorAll("#tool-tabs .tab").forEach((x) => x.classList.toggle("active", x.dataset.tool === name));
@@ -1552,6 +1707,32 @@ function showSummary(d) {
   $("#tool-summary").textContent = fn(summaryData);
   $("#tool-summary").hidden = false;
 }
+
+async function loadWolDevices() {
+  const d = await api("GET", "/api/dhcp");
+  const sel = $("#wol-lan"), cur = sel.value;
+  sel.innerHTML = `<option value="">${esc(I18N.t("где устройство получало адрес"))}</option>`
+    + d.segments.filter((s) => s.enabled).map((s) => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join("");
+  sel.value = cur;
+  const segName = Object.fromEntries(d.segments.map((s) => [s.id, s.name]));
+  const seen = new Set();
+  const rows = [];
+  for (const s of d.segments) for (const x of s.static_leases ?? []) {
+    seen.add(x.mac); rows.push({ name: x.name, ip: x.ip, mac: x.mac, lan: s.id });
+  }
+  for (const x of d.leases) if (!seen.has(x.mac)) rows.push({ name: x.name ?? x.hostname, ip: x.ip, mac: x.mac, lan: x.lan });
+  $("#wol-devices").innerHTML = rows.map((x) => `<tr><td>${dash(x.name)}</td><td>${esc(x.ip)}</td><td>${esc(x.mac)}</td>
+    <td>${esc(segName[x.lan] ?? x.lan)}</td><td class="actions"><button type="button" data-wol="${esc(x.mac)}" data-lan="${esc(x.lan)}">Разбудить</button></td></tr>`).join("")
+    || '<tr><td colspan="5" class="hint">нет устройств в DHCP</td></tr>';
+}
+$("#wol-devices").addEventListener("click", (ev) => {
+  const b = ev.target.closest("button[data-wol]");
+  if (b) wakeUp(b.dataset.wol, b.dataset.lan, $("#wol-ok"), $("#wol-error"));
+});
+$("#wol-form").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  wakeUp(ev.target.mac.value.trim(), ev.target.lan.value, $("#wol-ok"), $("#wol-error"));
+});
 
 async function runTool() {
   const f = $("#tool-form");
@@ -1658,6 +1839,29 @@ async function loadSystemPage() {
         <td class="actions"><a href="/api/system/snapshots/${encodeURIComponent(x.name)}">скачать</a>
           <button type="button" data-snap="${esc(x.name)}">Восстановить</button></td></tr>`).join("")
       || '<tr><td colspan="3" class="hint">снимков пока нет — они появятся после первого изменения</td></tr>';
+  } else if (sysTab === "ntp") {
+    const n = await api("GET", "/api/system/ntp");
+    const c = n.config;
+    $("#ntp-time").textContent = n.time ? new Date(n.time).toLocaleString(I18N.locale()) : "—";
+    $("#ntp-sync").innerHTML = !c.enabled ? "выключено" : !n.installed ? '<span class="flag-x">нет в образе</span>'
+      : n.synced ? '<span class="flag-r">синхронизировано</span>' : n.running ? "синхронизируется…" : '<span class="flag-x">не запущен</span>';
+    $("#ntp-ref").textContent = n.reference ?? "—";
+    $("#ntp-offset").textContent = n.offset == null ? "—" : I18N.t("{v} мс", { v: (n.offset * 1000).toFixed(3) });
+    $("#ntp-stratum").textContent = n.stratum ?? "—";
+    $("#ntp-serving").textContent = n.serving.join(", ") || "нет";
+    $("#ntp-error").textContent = n.error ?? "";
+    $("#ntp-clock").textContent = c.enabled ? (n.clock_control ? "Роутер сам подводит часы системы."
+      : "Режим Docker: часы общие с хостом — их подводит сам хост; роутер следит за точностью и раздаёт время в LAN.") : "";
+    $("#ntp-sources").innerHTML = n.sources.map((x) => `<tr><td><b>${esc(x.state)}</b></td><td>${esc(x.address)}</td>
+      <td class="num">${dash(x.stratum)}</td><td class="num">${x.reach == null ? "—" : [...x.reach.toString(2)].filter((b) => b === "1").length}</td>
+      <td class="num">${x.offset == null ? "—" : esc(I18N.t("{v} мс", { v: (x.offset * 1000).toFixed(3) }))}</td></tr>`).join("")
+      || `<tr><td colspan="5" class="hint">${c.enabled ? "источников пока нет" : "NTP выключен"}</td></tr>`;
+    if (!ntpFormLoaded) {
+      const f = $("#ntp-form");
+      f.enabled.checked = c.enabled; f.servers.value = c.servers.join(", ");
+      f.serve_lan.checked = c.serve_lan; f.orphan.checked = c.orphan;
+      ntpFormLoaded = true;
+    }
   } else if (sysTab === "audit") {
     const log = await api("GET", "/api/system/audit?limit=300");
     $("#audit").innerHTML = log.map((x) => `
@@ -1666,6 +1870,20 @@ async function loadSystemPage() {
       || '<tr><td colspan="6" class="hint">записей нет</td></tr>';
   }
 }
+
+let ntpFormLoaded = false;
+$("#ntp-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const f = ev.target;
+  $("#ntp-ok").textContent = ""; $("#ntp-form-error").textContent = "";
+  try {
+    await api("PUT", "/api/system/ntp", { enabled: f.enabled.checked, servers: f.servers.value.split(/[\s,;]+/).filter(Boolean),
+      serve_lan: f.serve_lan.checked, orphan: f.orphan.checked });
+    ntpFormLoaded = false;
+    $("#ntp-ok").textContent = "Применено";
+    await loadSystemPage();
+  } catch (e) { $("#ntp-form-error").textContent = e.message; }
+});
 
 $("#identity-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
@@ -1764,7 +1982,8 @@ const bits = (b) => {
 const bps = (bytesPerSec) => (bytesPerSec == null ? "—" : bits(bytesPerSec * 8));
 const pct = (v) => (v == null ? "—" : v === 0 ? "0%" : `${v < 10 ? v.toFixed(1) : Math.round(v)}%`);
 const monMs = (v) => (v == null ? "—" : `${v === 0 ? 0 : v < 10 ? v.toFixed(1) : Math.round(v)} мс`);
-const pingName = (p) => (p.name === "gateway" ? I18N.t("шлюз {ip}", { ip: p.target }) : p.target);
+const pingName = (p) => (p.name === "gateway" ? I18N.t("шлюз {ip}", { ip: p.target })
+  : p.name === "gateway2" ? I18N.t("шлюз WAN2 {ip}", { ip: p.target }) : p.target);
 
 // --- график: линии с заливкой, сетка, подписи осей, перекрестие и подсказка при наведении
 function niceMax(v) {
@@ -1984,7 +2203,9 @@ function renderMonTiles() {
   const gw = (s.ping ?? []).find((p) => p.name === "gateway");
   const leases = (s.dhcp ?? []).reduce((a, d) => a + d.leases, 0);
   const t = [
-    mtile("WAN", stateDot(s.wan.up, s.wan.up ? "работает" : "нет связи"), esc([s.wan.interface, s.wan.gateway].filter(Boolean).join(" → ")), null, true),
+    ...(s.wans?.length ? s.wans.map((w) => mtile(w.name, stateDot(w.healthy !== false, w.healthy === false ? "нет связи" : "работает"),
+      esc(w.interface ?? "") + (w.active ? " · " + I18N.t("трафик") : ""), null, true))
+      : [mtile("WAN", stateDot(s.wan.up, s.wan.up ? "работает" : "нет связи"), esc([s.wan.interface, s.wan.gateway].filter(Boolean).join(" → ")), null, true)]),
     mtile("CPU", pct(y.cpu), y.load ? `load ${y.load.map((x) => x.toFixed(2)).join(" ")}` : "", y.cpu),
     mtile("Память", pct(mem.percent), `${fmt(mem.used ?? 0)} / ${fmt(mem.total ?? 0)}`, mem.percent),
     disk ? mtile("Диск", pct(disk.percent), `${fmt(disk.used)} / ${fmt(disk.total)}`, disk.percent) : "",
@@ -2199,6 +2420,7 @@ function startApp() {
   selectRtTab("overview");
   selectFsTab("overview");
   selectMonTab("overview");
+  selectWanTab("wan1");
   document.querySelector('#mon-range button[data-range="1h"]').classList.add("active");
   selectTool("ping");
   selectSysTab("overview");

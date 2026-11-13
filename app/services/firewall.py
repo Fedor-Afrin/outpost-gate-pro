@@ -107,12 +107,36 @@ def ifset(names) -> str:
     return "{ " + ", ".join(f'"{n}"' for n in names) + " }"
 
 
-def render_forward(fwd: PortForward, fid: int, wan: str) -> str:
+def render_forward(fwd: PortForward, fid: int, wan) -> str:
     proto = "{ tcp, udp }" if fwd.protocol == "tcp+udp" else fwd.protocol
     src = f"ip saddr {fwd.src} " if fwd.src else ""
     target = fwd.to_ip + (f":{fwd.to_port}" if fwd.to_port else "")
-    return (f'{I}iifname "{wan}" {src}meta l4proto {proto} th dport {fwd.wan_port} '
+    return (f'{I}iifname {ifset(wan)} {src}meta l4proto {proto} th dport {fwd.wan_port} '
             f'counter dnat ip to {target} comment "fwd:{fid}"\n')
+
+
+def render_multiwan(wans: list[str]) -> str:
+    """Два провайдера: метка соединения = канал, через который оно вышло или пришло.
+    Пакеты из LAN с этой меткой маршрутизируются в «свой» канал (ip rule fwmark, см. multiwan.py)."""
+    if len(wans) < 2:
+        return ""
+    from app.services.multiwan import MARKS
+    marks = list(MARKS.values())
+    pre = "".join(f'{I}iifname "{w}" ct state new ct mark set {hex(m)}   # пришло через {w}\n'
+                  for w, m in zip(wans, marks))
+    post = "".join(f'{I}ct mark 0 oifname "{w}" ct mark set {hex(m)}   # ушло через {w}\n'
+                   for w, m in zip(wans, marks))
+    all_marks = ", ".join(hex(m) for m in marks[:len(wans)])
+    return f"""
+    chain multiwan_pre {{
+        type filter hook prerouting priority mangle; policy accept;
+{pre}{I}iifname != {ifset(wans)} ct mark {{ {all_marks} }} meta mark set ct mark
+    }}
+
+    chain multiwan_post {{
+        type filter hook postrouting priority mangle; policy accept;
+{post}    }}
+"""
 
 
 # --- весь ruleset ---------------------------------------------------------------------
@@ -135,15 +159,17 @@ def ruleset(wan: str, lan, wan_management: bool, vpn: VpnRules | None = None,
             rules: list[tuple[int, FirewallRule]] = (), forwards: list[tuple[int, PortForward]] = (),
             routing: RoutingRules | None = None, links: list[tuple[str, str]] = (),
             monitor: MonitorRules | None = None) -> str:
-    """lan — мост или список мостов сегментов; links — разрешённый транзит между сегментами
-    [(мост-откуда, мост-куда)]; без него сегменты друг друга не видят."""
+    """wan — интерфейс WAN или список (два провайдера); lan — мост или список мостов сегментов;
+    links — разрешённый транзит между сегментами [(мост-откуда, мост-куда)]."""
     lans = [lan] if isinstance(lan, str) else list(lan)
     lan = ifset(lans)
-    ifaces = {"wan": wan, "lan": lans, "vpn": vpn.iface if vpn else None}
+    wans = [wan] if isinstance(wan, str) else list(wan)
+    wan = ifset(wans)
+    ifaces = {"wan": wans, "lan": lans, "vpn": vpn.iface if vpn else None}
     user_in = "".join(render_rule(r, rid, ifaces) for rid, r in rules if r.enabled and r.chain == "input")
     user_fwd = "".join(render_rule(r, rid, ifaces) for rid, r in rules if r.enabled and r.chain == "forward")
     active_fwd = [(fid, f) for fid, f in forwards if f.enabled]
-    dnat = "".join(render_forward(f, fid, wan) for fid, f in active_fwd)
+    dnat = "".join(render_forward(f, fid, wans) for fid, f in active_fwd)
 
     mgmt = ", ".join(str(p) for p in management_ports())
     mgmt_rule = f'{I}tcp dport {{ {mgmt} }} accept   # управление с WAN (веб, SSH)\n' if wan_management else ""
@@ -167,7 +193,7 @@ def ruleset(wan: str, lan, wan_management: bool, vpn: VpnRules | None = None,
     if vpn and vpn.killswitch:
         forward += f'{I}# kill switch: LAN → WAN напрямую запрещено, только через туннель\n'
     else:
-        forward += f'{I}iifname {lan} oifname "{wan}" accept\n'
+        forward += f'{I}iifname {lan} oifname {wan} accept\n'
     if vpn:
         forward += f'{I}iifname {lan} oifname "{vpn.iface}" accept\n'
         if vpn.inbound:
@@ -175,7 +201,7 @@ def ruleset(wan: str, lan, wan_management: bool, vpn: VpnRules | None = None,
     for a, b in links:
         forward += f'{I}iifname "{a}" oifname "{b}" accept   # транзит между сегментами LAN\n'
 
-    post = f'{I}oifname "{wan}" masquerade\n'
+    post = f'{I}oifname {wan} masquerade\n'
     if vpn and vpn.nat:
         post += f'{I}oifname "{vpn.iface}" masquerade\n'
 
@@ -191,7 +217,7 @@ table inet {TABLE} {{
         ct state established,related accept
         ct state invalid drop
         iifname "lo" accept
-{user_in_block}{render_routing(routing, lans)}{render_monitor(monitor)}{input_vpn}        iifname != "{wan}" accept            # LAN — без ограничений
+{user_in_block}{render_routing(routing, lans)}{render_monitor(monitor)}{input_vpn}        iifname != {wan} accept            # LAN — без ограничений
         ip protocol icmp accept
         udp sport 67 udp dport 68 accept     # ответы DHCP-сервера провайдера
 {ipsec_rules}{mgmt_rule}        drop                                 # всё остальное с WAN
@@ -208,7 +234,7 @@ table inet {TABLE} {{
     chain postrouting {{
         type nat hook postrouting priority srcnat; policy accept;
 {post}    }}
-}}
+{render_multiwan(wans)}}}
 """
 
 
@@ -228,6 +254,7 @@ def system_rules(wan: str | None, wan_management: bool, vpn: VpnRules | None,
         inp.append(f"BGP от соседей {', '.join(routing.bgp_peers)} (TCP 179) — разрешён")
     for proto, port, sources, comment in monitor or ():
         inp.append(f"{comment} ({proto.upper()} {port}) от {', '.join(sources)} — разрешён")
+    wan = ", ".join(wan) if isinstance(wan, (list, tuple)) else wan
     inp.append(f"С WAN ({wan}): ping и DHCP" + (f", управление (порты {mgmt})" if wan_management else ""))
     if vpn and vpn.ipsec_server:
         inp.append(f"С WAN от сервера L2TP {vpn.ipsec_server}: IKE, ESP, L2TP")
@@ -273,8 +300,9 @@ def apply(wan: str, lan, wan_management: bool, vpn: VpnRules | None = None,
 
 
 def context(lan_cfg=None):
-    """(wan, мосты LAN, wan_management, vpn, rules, forwards, routing, links, monitor) или None, если LAN выключен."""
-    from app.services import firewall_rules, lan, routing, vpn   # здесь, чтобы не было циклического импорта
+    """(wan, мосты LAN, wan_management, vpn, rules, forwards, routing, links, monitor) или None, если LAN выключен.
+    wan — строка (один провайдер) или список (два)."""
+    from app.services import firewall_rules, lan, routing, vpn, wan   # здесь, чтобы не было циклического импорта
     segs = lan.segments()
     if lan_cfg is not None:
         segs = [lan_cfg if s.id == lan_cfg.id else s for s in segs]
@@ -282,6 +310,12 @@ def context(lan_cfg=None):
     wan_if = lan.wan_interface()
     if not (active and wan_if):
         return None
+    try:
+        wans = wan.active_interfaces()
+    except Exception:  # noqa: BLE001
+        wans = []
+    if len(wans) > 1:
+        wan_if = wans
     return (wan_if, [s.bridge for s in active], segs[0].wan_management, vpn.firewall_rules(),
             firewall_rules.rules(), firewall_rules.forwards(), routing_rules(), segment_links(active), monitor_rules())
 

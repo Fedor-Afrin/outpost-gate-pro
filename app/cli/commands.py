@@ -1567,6 +1567,113 @@ def monitoring_print(ctx, pos, named):
              ("lan-networks", ",".join(d["lan_networks"]) or "-")])
 
 
+# --- два WAN, NTP, Wake-on-LAN ------------------------------------------------------------------------------------
+def multiwan_print(ctx, pos, named):
+    d = ctx.api.get("/api/wan/multiwan")
+    c = d["config"]
+    kv(ctx, [("wan2", "enabled" if d["enabled"] else "disabled"), ("mode", c["mode"]),
+             ("primary", c["primary"] if c["mode"] == "failover" else None),
+             ("weights", f'{c["weight1"]}:{c["weight2"]}' if c["mode"] == "balance" else None),
+             ("check-targets", ",".join(c["check_targets"])), ("interval", f'{c["interval"]}s'),
+             ("fail-after", c["fail_after"]), ("recover-after", c["recover_after"])])
+    ctx.out("")
+    rows = [w for w in d["wans"] if w["enabled"]]
+    table(ctx, ["name", "interface", "address", "gateway", "check", "rtt"],
+          [[w["name"], w["interface"] or "", w["address"] or "", w["gateway"] or "",
+            {True: "up", False: "down", None: "-"}[w["healthy"]], f'{w["rtt"]}ms' if w["rtt"] is not None else ""]
+           for w in rows], flags=["A" if w["active"] else "" for w in rows], legend="A - active (трафик идёт через этот WAN)")
+
+
+def multiwan_set(ctx, pos, named):
+    c = ctx.api.get("/api/wan/multiwan")["config"]
+    for k, f in (("mode", "mode"), ("primary", "primary")):
+        if k in named:
+            c[f] = named[k]
+    for k, f in (("weight1", "weight1"), ("weight2", "weight2"), ("interval", "interval"),
+                 ("fail-after", "fail_after"), ("recover-after", "recover_after")):
+        if k in named:
+            c[f] = int(named[k])
+    if "check-targets" in named:
+        c["check_targets"] = [x for x in named["check-targets"].split(",") if x]
+    ctx.api.put("/api/wan/multiwan", c)
+
+
+def wan2_print(ctx, pos, named):
+    d = ctx.api.get("/api/wan/wan2")
+    c = d["config"]
+    kv(ctx, [("enabled", c.get("enabled", False)), ("interface", c["interface"] or "-"), ("mode", c["mode"]),
+             ("address", ", ".join(d["addresses"]) or "-"), ("gateway", d["gateway"] or "-"),
+             ("dns", ",".join(d["dns"]) or "-"), ("vlan-id", c.get("vlan_id")), ("status", d.get("dhcp_state") or "-")])
+
+
+def wan2_set(ctx, pos, named):
+    c = dict(ctx.api.get("/api/wan/wan2")["config"])
+    if "enabled" in named:
+        c["enabled"] = yes(named["enabled"])
+    for k in ("interface", "mode", "address", "gateway"):
+        if k in named:
+            c[k] = named[k] or None
+    if "dns" in named:
+        c["dns"] = [x for x in named["dns"].split(",") if x]
+    if "vlan-id" in named:
+        c["vlan_id"] = int(named["vlan-id"]) if named["vlan-id"] else None
+    ctx.api.put("/api/wan/wan2", c)
+
+
+def ntp_client_print(ctx, pos, named):
+    d = ctx.api.get("/api/system/ntp")
+    c = d["config"]
+    kv(ctx, [("enabled", c["enabled"]), ("servers", ",".join(c["servers"]) or "-"),
+             ("status", "synchronized" if d["synced"] else ("running" if d["running"] else "stopped")),
+             ("stratum", d.get("stratum")), ("reference", d.get("reference")),
+             ("offset", f'{d["offset"] * 1000:.3f}ms' if d.get("offset") is not None else None),
+             ("set-system-clock", d["clock_control"]), ("error", d.get("error"))])
+    if d.get("sources"):
+        ctx.out("")
+        table(ctx, ["address", "stratum", "reach", "offset"],
+              [[x["address"], x["stratum"], oct(x["reach"] or 0)[2:], f'{(x["offset"] or 0) * 1000:.3f}ms'] for x in d["sources"]],
+              flags=[x["state"] for x in d["sources"]], legend="* - выбран, + - используется, ? - нет ответа")
+
+
+def _ntp_put(ctx, **changes):
+    c = dict(ctx.api.get("/api/system/ntp")["config"])
+    c.update(changes)
+    ctx.api.put("/api/system/ntp", c)
+
+
+def ntp_client_set(ctx, pos, named):
+    ch = {}
+    if "enabled" in named:
+        ch["enabled"] = yes(named["enabled"])
+    if "servers" in named:
+        ch["servers"] = [x for x in named["servers"].split(",") if x]
+    _ntp_put(ctx, **ch)
+
+
+def ntp_server_print(ctx, pos, named):
+    d = ctx.api.get("/api/system/ntp")
+    c = d["config"]
+    kv(ctx, [("enabled", c["serve_lan"]), ("orphan", c["orphan"]), ("networks", ",".join(d["serving"]) or "-")])
+
+
+def ntp_server_set(ctx, pos, named):
+    ch = {}
+    if "enabled" in named:
+        ch["serve_lan"] = yes(named["enabled"])
+    if "orphan" in named:
+        ch["orphan"] = yes(named["orphan"])
+    _ntp_put(ctx, **ch)
+
+
+def wol_cmd(ctx, pos, named):
+    mac = named.get("mac") or (pos[0] if pos else None)
+    if not mac:
+        raise CliError("укажите mac=3c:52:82:aa:bb:cc")
+    r = ctx.api.post("/api/tools/wol", {"mac": mac, "lan": named.get("interface")})
+    sent = (r or {}).get("sent") or []
+    ctx.out(f"magic packet sent to {(r or {}).get('mac', mac)}" + (f" via {', '.join(x['bridge'] for x in sent)}" if sent else ""))
+
+
 # --- дерево меню ------------------------------------------------------------------------------------------------------
 P = "показать"
 
@@ -1588,6 +1695,18 @@ ROOT = Menu("OutpostGate Pro", {
         "l2tp-client": Menu("L2TP/IPsec", {"print": pr(l2tp_client_print)}),
     }),
     "ip": Menu("IP", {
+        "multiwan": Menu("два провайдера: резерв или балансировка", {
+            "print": Cmd(multiwan_print, P),
+            "set": Cmd(multiwan_set, "set mode=failover primary=wan1 | mode=balance weight1=2 weight2=1",
+                       ("mode", "primary", "weight1", "weight2", "check-targets", "interval", "fail-after", "recover-after"),
+                       {"mode": ["failover", "balance"], "primary": ["wan1", "wan2"]}),
+        }),
+        "wan2": Menu("второй провайдер", {
+            "print": Cmd(wan2_print, P),
+            "set": Cmd(wan2_set, "set enabled=yes interface=eth2 mode=dhcp | mode=static address=... gateway=...",
+                       ("enabled", "interface", "mode", "address", "gateway", "dns", "vlan-id"),
+                       {"enabled": YESNO, "mode": ["dhcp", "static", "none"]}),
+        }),
         "address": Menu("IP-адреса", {
             "print": pr(address_print),
             "add": Cmd(address_add, "добавить: add address=10.0.0.1/24 interface=eth2",
@@ -1769,6 +1888,16 @@ ROOT = Menu("OutpostGate Pro", {
         "routerboard": Menu("устройство", {"print": Cmd(routerboard_print, P)}),
         "package": Menu("версия", {"print": pr(package_print)}),
         "monitoring": Menu("мониторинг и экспорт (Prometheus, SNMP, Zabbix)", {"print": Cmd(monitoring_print, P)}),
+        "ntp": Menu("время (chrony)", {
+            "client": Menu("синхронизация роутера", {
+                "print": Cmd(ntp_client_print, P),
+                "set": Cmd(ntp_client_set, "set enabled=yes servers=pool.ntp.org,time.google.com",
+                           ("enabled", "servers"), {"enabled": YESNO})}),
+            "server": Menu("раздача времени в LAN", {
+                "print": Cmd(ntp_server_print, P),
+                "set": Cmd(ntp_server_set, "set enabled=yes orphan=no", ("enabled", "orphan"),
+                           {"enabled": YESNO, "orphan": YESNO})}),
+        }),
         "shell": Cmd(system_shell, "командная строка Linux (bash); назад — exit или Ctrl-D"),
         "reboot": Cmd(system_reboot, "перезапустить сервис роутера"),
     }),
@@ -1789,6 +1918,7 @@ ROOT = Menu("OutpostGate Pro", {
                        ("address-range", "interface"), IFACE),
         "dns-lookup": Cmd(dns_lookup, "dns-lookup name=example.com", ("name",)),
         "torch": Cmd(torch, "кто качает: torch segment=LAN count=20", ("segment", "count")),
+        "wol": Cmd(wol_cmd, "разбудить компьютер: wol mac=3c:52:82:aa:bb:cc interface=br-lan", ("mac", "interface")),
     }),
     "snmp": Menu("SNMP-агент", {
         "print": Cmd(snmp_print, P),

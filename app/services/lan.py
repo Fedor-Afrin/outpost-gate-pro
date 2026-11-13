@@ -162,7 +162,7 @@ def wan_interface() -> str | None:
 
 
 def _wan_ports() -> list[str]:
-    """Интерфейс WAN и, если WAN на VLAN, его физический порт (без тега он не годится для LAN)."""
+    """Интерфейсы WAN (оба провайдера) и, если WAN на VLAN, физические порты (без тега они не годятся для LAN)."""
     try:
         st = wan.load_state()
     except Exception:
@@ -171,6 +171,10 @@ def _wan_ports() -> list[str]:
     if not out:
         w = wan_interface()
         out = [w] if w else []
+    try:
+        out += [x for x in wan.physical_ports() if x not in out]
+    except Exception:  # noqa: BLE001 — второй WAN не должен ломать LAN
+        pass
     return out
 
 
@@ -320,6 +324,12 @@ def _services(segs: list[LanConfig] | None = None) -> None:
         files.apply()             # Samba слушает мосты сегментов — они могли смениться
     except files.FilesError as e:
         print(f"[lan] WARNING: файловый сервер: {e.message}")
+    from app.services import ntp
+    try:
+        if ntp.serves_lan():
+            ntp.apply()           # раздача времени — сетям сегментов (allow)
+    except ntp.NtpError as e:
+        print(f"[lan] WARNING: NTP: {e.message}")
 
 
 def _dhcp_segments(segs: list[LanConfig]):

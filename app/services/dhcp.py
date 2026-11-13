@@ -92,7 +92,7 @@ def _raw(code: int, hexdata: str) -> dict:
     return {"code": code, "space": "dhcp4", "csv-format": False, "data": hexdata}
 
 
-def option_data(seg: LanConfig, upstream_dns: list[str]) -> list[dict]:
+def option_data(seg: LanConfig, upstream_dns: list[str], ntp_router: bool = False) -> list[dict]:
     o = seg.dhcp_options
     out = [{"name": "routers", "data": seg.router_ip}]
     dns = o.dns_servers or ([seg.router_ip] if seg.dns_enabled else upstream_dns)
@@ -106,6 +106,8 @@ def option_data(seg: LanConfig, upstream_dns: list[str]) -> list[dict]:
     for field, name in NAMED.items():
         if getattr(o, field):
             out.append({"name": name, "data": ", ".join(getattr(o, field))})
+        elif field == "ntp_servers" and ntp_router:      # роутер раздаёт время (System → Время)
+            out.append({"name": name, "data": seg.router_ip})
     if o.time_offset is not None:
         out.append({"name": "time-offset", "data": str(o.time_offset)})
     if o.mtu:
@@ -146,7 +148,7 @@ def reservations(seg: LanConfig, static: list[StaticLease]) -> list[dict]:
 
 
 def kea_conf(segments: list[tuple[LanConfig, list[StaticLease]]], upstream_dns: list[str],
-             leases: str) -> dict:
+             leases: str, ntp_router: bool = False) -> dict:
     """segments — включённые сегменты с DHCP и их закреплённые адреса."""
     subnets = []
     for seg, static in segments:
@@ -156,7 +158,7 @@ def kea_conf(segments: list[tuple[LanConfig, list[StaticLease]]], upstream_dns: 
             "interface": seg.bridge,
             "pools": [{"pool": f"{seg.pool_start} - {seg.pool_end}"}],
             "valid-lifetime": seconds(seg.lease_time),
-            "option-data": option_data(seg, upstream_dns),
+            "option-data": option_data(seg, upstream_dns, ntp_router),
             "reservations": reservations(seg, static),
             "user-context": {"lan": seg.id, "name": seg.name},
         })
@@ -211,7 +213,8 @@ def apply(segments: list[tuple[LanConfig, list[StaticLease]]], upstream_dns: lis
             raise DhcpError(500, "нет Kea DHCP в образе — пересоберите образ (docker compose build)")
         _prepare_dirs()
         migrate_dnsmasq_leases(segments)
-        conf = kea_conf(segments, upstream_dns, str(KEA_LIB / leases_file().name))
+        from app.services import ntp
+        conf = kea_conf(segments, upstream_dns, str(KEA_LIB / leases_file().name), ntp.serves_lan())
         path = _data("kea-dhcp4.conf")
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".kea.", suffix=".conf")

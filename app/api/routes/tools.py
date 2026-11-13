@@ -7,16 +7,31 @@
   GET  /api/tools/neighbors     таблица соседей (ARP)
   GET  /api/tools/dns?host=     разрешение имени
   GET  /api/tools/interfaces    интерфейсы для выбора в формах
+  POST /api/tools/wol           Wake-on-LAN: {"mac": "3c:52:82:aa:bb:cc", "lan": "lan1" (необязательно)}
 """
 import asyncio
 import contextlib
 
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
 
 from app.core import auth
 from app.services import netlink, tools
 
 router = APIRouter()
+
+
+class WolRequest(BaseModel):
+    mac: str
+    lan: str | None = None
+
+
+@router.post("/wol")
+def wake_on_lan(data: WolRequest):
+    try:
+        return tools.wol(data.mac, data.lan)
+    except tools.ToolError as e:
+        raise HTTPException(400, str(e))
 
 
 @router.get("/neighbors")

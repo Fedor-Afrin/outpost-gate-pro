@@ -188,7 +188,7 @@ def test_completion():
     assert c.complete("", []) == sorted(c.ROOT.children)
     assert c.complete("/ip a", []) == ["address", "arp"]
     assert c.complete("/ip ", []) == ["address", "arp", "dhcp-client", "dhcp-server", "dns", "firewall",
-                                      "neighbor", "pool", "route", "service", "smb"]
+                                      "multiwan", "neighbor", "pool", "route", "service", "smb", "wan2"]
     assert c.complete("/ip/ad", []) == ["/ip/address"]
     assert c.complete("add ", ["ip", "address"]) == ["address=", "interface=", "comment=", "disabled="]
     assert c.complete("add disabled=", ["ip", "address"]) == ["disabled=yes", "disabled=no"]
@@ -523,3 +523,37 @@ def test_monitoring_cli(ctx):
     out.clear()
     c.execute(cx, "/system monitoring print", [])
     assert any("prometheus-token: yes" in l for l in out) and any("snmp-running: yes" in l for l in out)
+
+
+def test_multiwan_ntp_wol_cli(ctx):
+    cx, out = ctx
+    cx.api.data["/api/wan/multiwan"] = {"enabled": True, "events": [], "config": {
+        "mode": "failover", "primary": "wan1", "weight1": 1, "weight2": 1, "check_targets": ["1.1.1.1", "8.8.8.8"],
+        "interval": 5, "fail_after": 3, "recover_after": 5}, "wans": [
+        {"id": "wan1", "name": "WAN1", "enabled": True, "interface": "eth0", "address": "203.0.113.10",
+         "gateway": "203.0.113.1", "healthy": False, "active": False, "rtt": None},
+        {"id": "wan2", "name": "WAN2", "enabled": True, "interface": "eth2", "address": "100.64.5.7",
+         "gateway": "100.64.5.1", "healthy": True, "active": True, "rtt": 9.5}]}
+    c.execute(cx, "/ip multiwan print", [])
+    assert any("mode: failover" in l for l in out)
+    rows = [l for l in out if "WAN2" in l]
+    assert rows and rows[0].split()[:3] == ["1", "A", "WAN2"] and "up" in rows[0]
+    c.execute(cx, "/ip multiwan set mode=balance weight1=3", [])
+    m, path, body = cx.api.calls[-1]
+    assert (m, path) == ("PUT", "/api/wan/multiwan") and body["mode"] == "balance" and body["weight1"] == 3
+
+    cx.api.data["/api/system/ntp"] = {"config": {"enabled": True, "servers": ["pool.ntp.org"], "serve_lan": True,
+                                                 "orphan": False}, "running": True, "synced": True, "stratum": 3,
+                                      "reference": "162.159.200.1", "offset": -0.000012, "clock_control": False,
+                                      "serving": ["192.168.88.0/24"], "sources": [
+                                          {"address": "162.159.200.1", "state": "*", "stratum": 2, "reach": 255, "offset": 0.0001}]}
+    out.clear()
+    c.execute(cx, "/system ntp client print", [])
+    assert any("status: synchronized" in l for l in out) and any("162.159.200.1" in l and "377" in l for l in out)
+    c.execute(cx, "/system ntp server set enabled=no", [])
+    m, path, body = cx.api.calls[-1]
+    assert path == "/api/system/ntp" and body["serve_lan"] is False and body["servers"] == ["pool.ntp.org"]
+    out.clear()
+    c.execute(cx, "/tool wol mac=3c:52:82:aa:bb:cc interface=LAN", [])
+    m, path, body = cx.api.calls[-1]
+    assert (m, path, body) == ("POST", "/api/tools/wol", {"mac": "3c:52:82:aa:bb:cc", "lan": "LAN"})
