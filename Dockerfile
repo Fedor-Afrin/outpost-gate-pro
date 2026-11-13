@@ -24,7 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         strongswan-charon strongswan-swanctl xl2tpd ppp \
         frr frr-pythontools \
         samba samba-common-bin samba-vfs-modules fdisk e2fsprogs exfatprogs \
-        snmpd chrony conntrack \
+        snmpd chrony conntrack tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 # Zabbix agent: agent 2, если есть в репозитории дистрибутива, иначе классический zabbix_agentd

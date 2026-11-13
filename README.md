@@ -128,6 +128,24 @@ bgp instance/network/peer/session, route), `/export`.
 - Wake-on-LAN: кнопка «Разбудить» у устройств в DHCP и вкладка Tools → Wake-on-LAN; CLI `/tool wol`.
 - CLI: `/system ntp client print | set`, `/system ntp server print | set`.
 
+## Планировщик (Scheduler)
+Задачи по расписанию: каждый день, по дням недели, каждые N минут, один раз или cron.
+Действия: разбудить ПК (WoL), включить/выключить сегмент LAN, правило фаервола, проброс порта, VPN,
+ограничение QoS; резервная копия конфигурации (data/backups), обновить аренду WAN, сменить основной WAN,
+перезапуск. Журнал запусков и «Выполнить сейчас». Время — по часовому поясу роутера (System → Время).
+CLI: `/system scheduler print | add | set | enable | disable | remove | run`, `/system clock set time-zone-name=`.
+
+## QoS
+- Ограничение скорости сегментов (загрузка и отдача) и отдельных устройств по IP.
+- Приоритет голосу: SIP и RTP получают DSCP EF и идут первыми — и к устройствам, и в интернет.
+- Скорость провайдера: очередь на роутере, а не в модеме (fq_codel против bufferbloat).
+- Linux tc: HTB + fq_codel на мостах сегментов и WAN, police на входе мостов. Счётчики очередей во вкладке QoS.
+- CLI (как в RouterOS, max-limit=отдача/загрузка): `/queue settings`, `/queue segment`, `/queue simple`.
+
+## Экспорт командами
+System → Резервные копии → «Экспорт командами» или `/export` в CLI: вся конфигурация командами, как `/export`
+в RouterOS. Секреты скрыты; `/export show-sensitive` — с ними; `/export format=yaml` — router.yaml.
+
 ## Дорожная карта
 - [x] Каркас
 - [x] Advanced: IP Addresses, IP Routes (двигатель)
@@ -143,4 +161,5 @@ bgp instance/network/peer/session, route), `/export`.
 - [x] Веб-интерфейс без раздела Advanced: адреса и маршруты — в CLI
 - [x] Pro: OSPF/BGP, LAN-сегменты + Kea + BIND 9, Samba, VLAN 802.1Q, мониторинг (дашборд, Prometheus, SNMP, Zabbix)
 - [x] Pro: два провайдера (резерв и балансировка), NTP, Wake-on-LAN
-- [ ] Дальше: скрипт установки на ВМ и железо, DDNS (вместе с VPN-сервером), планировщик, HTTPS
+- [x] Pro: планировщик, QoS (лимиты, приоритет голосу), экспорт командами, часовой пояс
+- [ ] Дальше: скрипт установки на ВМ и железо; отдельно — Proxy Manager (HTTPS), удалённый доступ

@@ -330,6 +330,11 @@ def _services(segs: list[LanConfig] | None = None) -> None:
             ntp.apply()           # раздача времени — сетям сегментов (allow)
     except ntp.NtpError as e:
         print(f"[lan] WARNING: NTP: {e.message}")
+    from app.services import qos
+    try:
+        qos.apply()               # очереди висят на мостах сегментов и на WAN — они могли смениться
+    except qos.QosError as e:
+        print(f"[lan] WARNING: QoS: {e.message}")
 
 
 def _dhcp_segments(segs: list[LanConfig]):

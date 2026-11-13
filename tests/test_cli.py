@@ -557,3 +557,33 @@ def test_multiwan_ntp_wol_cli(ctx):
     c.execute(cx, "/tool wol mac=3c:52:82:aa:bb:cc interface=LAN", [])
     m, path, body = cx.api.calls[-1]
     assert (m, path, body) == ("POST", "/api/tools/wol", {"mac": "3c:52:82:aa:bb:cc", "lan": "LAN"})
+
+
+def test_scheduler_queue_export_cli(ctx):
+    cx, out = ctx
+    assert c.parse_limit("2M/10M") == (2.0, 10.0) and c.parse_limit("512k/0") == (0.512, None)
+    assert c.parse_limit("5M") == (5.0, 5.0)
+    cx.api.data["/api/qos"] = {"config": {"enabled": True, "wan_up": 50, "wan_down": 200, "voice": True,
+                                          "sip_ports": "5060-5061", "rtp_ports": "10000-20000", "segments": [],
+                                          "devices": [{"ip": "192.168.88.20", "name": "laptop", "up": 2, "down": 10, "enabled": True}]},
+                               "active": True, "error": None, "stats": [],
+                               "segments": [{"id": "lan2", "name": "Guests", "network": "10.20.0.0/24", "bridge": "br-lan2"}]}
+    c.execute(cx, "/queue simple print", [])
+    row = next(l for l in out if l.strip().startswith("0 "))
+    assert row.split()[:4] == ["0", "laptop", "192.168.88.20", "2M/10M"]
+    c.execute(cx, "/queue simple add target=192.168.88.30 max-limit=1M/5M name=tv", [])
+    body = cx.api.calls[-1][2]
+    assert body["devices"][-1] == {"ip": "192.168.88.30", "name": "tv", "up": 1.0, "down": 5.0, "enabled": True}
+    c.execute(cx, "/queue segment set lan=Guests max-limit=5M/20M", [])
+    assert cx.api.calls[-1][2]["segments"] == [{"lan": "lan2", "up": 5.0, "down": 20.0}]
+    c.execute(cx, "/queue simple disable 0", [])
+    assert cx.api.calls[-1][2]["devices"][0]["enabled"] is False
+
+    c.execute(cx, "/system scheduler add name=wake on-event=wol mac=3c:52:82:aa:bb:cc start-time=08:00 days=mon,tue,fri", [])
+    m, path, body = cx.api.calls[-1]
+    assert path == "/api/scheduler/tasks" and body["schedule"] == {"kind": "weekly", "time": "08:00", "days": [0, 1, 4]}
+    assert body["action"] == {"type": "wol", "mac": "3c:52:82:aa:bb:cc"}
+    c.execute(cx, "/system scheduler add name=bk on-event=backup interval=15m", [])
+    assert cx.api.calls[-1][2]["schedule"] == {"kind": "interval", "every": 15}
+    c.execute(cx, '/system scheduler add name=g on-event=lan_segment lan=Guests set-enabled=no cron="0 23 * * *"', [])
+    assert cx.api.calls[-1][2]["schedule"] == {"kind": "cron", "cron": "0 23 * * *"} and cx.api.calls[-1][2]["action"]["enabled"] is False

@@ -139,6 +139,20 @@ def render_multiwan(wans: list[str]) -> str:
 """
 
 
+def render_qos(qos: tuple[str, str] | None) -> str:
+    """Приоритет голосу: SIP и RTP получают DSCP EF — по нему их узнают очереди QoS (см. qos.py)."""
+    if not qos:
+        return ""
+    ports = f"{{ {qos[0]}, {qos[1]} }}"
+    return f"""
+    chain qos_mark {{
+        type filter hook forward priority mangle; policy accept;
+{I}udp dport {ports} ip dscp set ef   # SIP и RTP — голос
+{I}udp sport {ports} ip dscp set ef
+    }}
+"""
+
+
 # --- весь ruleset ---------------------------------------------------------------------
 def render_routing(routing: RoutingRules | None, lan) -> str:
     """OSPF и BGP: до правил «из туннеля только ответы» и «с WAN всё запрещено»."""
@@ -158,7 +172,7 @@ def render_routing(routing: RoutingRules | None, lan) -> str:
 def ruleset(wan: str, lan, wan_management: bool, vpn: VpnRules | None = None,
             rules: list[tuple[int, FirewallRule]] = (), forwards: list[tuple[int, PortForward]] = (),
             routing: RoutingRules | None = None, links: list[tuple[str, str]] = (),
-            monitor: MonitorRules | None = None) -> str:
+            monitor: MonitorRules | None = None, qos: tuple[str, str] | None = None) -> str:
     """wan — интерфейс WAN или список (два провайдера); lan — мост или список мостов сегментов;
     links — разрешённый транзит между сегментами [(мост-откуда, мост-куда)]."""
     lans = [lan] if isinstance(lan, str) else list(lan)
@@ -234,7 +248,7 @@ table inet {TABLE} {{
     chain postrouting {{
         type nat hook postrouting priority srcnat; policy accept;
 {post}    }}
-{render_multiwan(wans)}}}
+{render_multiwan(wans)}{render_qos(qos)}}}
 """
 
 
@@ -291,8 +305,8 @@ def apply_text(text: str) -> None:
 
 
 def apply(wan: str, lan, wan_management: bool, vpn: VpnRules | None = None,
-          rules=(), forwards=(), routing: RoutingRules | None = None, links=(), monitor=None) -> None:
-    apply_text(ruleset(wan, lan, wan_management, vpn, rules, forwards, routing, links, monitor))
+          rules=(), forwards=(), routing: RoutingRules | None = None, links=(), monitor=None, qos=None) -> None:
+    apply_text(ruleset(wan, lan, wan_management, vpn, rules, forwards, routing, links, monitor, qos))
     print(f"[firewall] применён: WAN={wan} LAN={lan} управление с WAN={'да' if wan_management else 'нет'}"
           + (f" VPN={vpn.iface} NAT={'да' if vpn.nat else 'нет'} kill switch={'да' if vpn.killswitch else 'нет'}"
              if vpn else "")
@@ -317,7 +331,8 @@ def context(lan_cfg=None):
     if len(wans) > 1:
         wan_if = wans
     return (wan_if, [s.bridge for s in active], segs[0].wan_management, vpn.firewall_rules(),
-            firewall_rules.rules(), firewall_rules.forwards(), routing_rules(), segment_links(active), monitor_rules())
+            firewall_rules.rules(), firewall_rules.forwards(), routing_rules(), segment_links(active), monitor_rules(),
+            qos_ports())
 
 
 def segment_links(active) -> list[tuple[str, str]]:
@@ -338,6 +353,11 @@ def routing_rules() -> RoutingRules | None:
         print(f"[firewall] WARNING: маршрутизация: {e}")
         return None
     return r or None
+
+
+def qos_ports() -> tuple[str, str] | None:
+    from app.services import qos
+    return qos.firewall_ports()
 
 
 def monitor_rules() -> MonitorRules:
