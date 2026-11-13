@@ -25,7 +25,7 @@ def test_kea_conf_two_segments():
     conf = dhcp.kea_conf([(a, [StaticLease(mac="00:0b:82:aa:bb:cc", ip="192.168.88.5", name="GXP1625"),
                                StaticLease(mac="00:0b:82:00:00:09", ip="10.20.0.99")]),     # чужая сеть — мимо
                           (b, [StaticLease(mac="00:0b:82:00:00:01", ip="10.20.0.9", name="Телефон")])],
-                         ["1.1.1.1", "8.8.8.8"], "/d/leases.csv", "/d/sock")
+                         ["1.1.1.1", "8.8.8.8"], "/var/lib/kea/kea-leases4.csv")
     json.dumps(conf)                                              # сериализуется
     d = conf["Dhcp4"]
     assert d["interfaces-config"]["interfaces"] == ["br-lan", "br-lan2"]
@@ -48,7 +48,9 @@ def test_kea_conf_two_segments():
     # DNS на сегменте выключен — клиенты получают DNS провайдера
     o2 = {o.get("name"): o["data"] for o in s2["option-data"] if "name" in o}
     assert o2["domain-name-servers"] == "1.1.1.1, 8.8.8.8" and s2["valid-lifetime"] == 3600
-    assert d["ddns-send-updates"] is False and d["lease-database"]["name"] == "/d/leases.csv"
+    assert d["ddns-send-updates"] is False and d["lease-database"]["name"] == "/var/lib/kea/kea-leases4.csv"
+    assert "control-socket" not in d                 # Kea 2.6.3+: сокет только в /run/kea — он не нужен
+
 
 
 def test_dhcp_option_validation():
@@ -199,3 +201,21 @@ def test_firewall_multi_lan(tmp_path):
         f.write_text(rs)
         r = subprocess.run(["nft", "-c", "-f", str(f)], capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
+
+
+def test_kea_dirs(tmp_path, monkeypatch):
+    """Kea 2.6.3+: аренды только в /var/lib/kea — это ссылка на data/kea; старый файл переезжает."""
+    data, lib, run = tmp_path / "data", tmp_path / "var-lib-kea", tmp_path / "run-kea"
+    data.mkdir()
+    monkeypatch.setattr(dhcp, "_data", lambda n: data / n)
+    monkeypatch.setattr(dhcp, "KEA_LIB", lib)
+    monkeypatch.setattr(dhcp, "KEA_RUN", run)
+    lib.mkdir()
+    (lib / "kea-leases4.csv").write_text("from package\n")       # пакетная папка с файлом
+    (data / "kea-leases4.csv").write_text("old stage-2 leases\n")
+    dhcp._prepare_dirs()
+    assert lib.is_symlink() and lib.resolve() == (data / "kea").resolve() and run.is_dir()
+    assert dhcp.leases_file().read_text() == "old stage-2 leases\n"
+    assert not (data / "kea-leases4.csv").exists()
+    dhcp._prepare_dirs()                                           # повторно — ничего не ломает
+    assert lib.is_symlink() and dhcp.leases_file().exists()
