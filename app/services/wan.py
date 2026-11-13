@@ -79,7 +79,7 @@ def cleanup(state: dict) -> None:
             print(f"[wan] WARNING: {e}")
 
 
-# --- вышестоящие DNS (для dnsmasq в LAN) ----------------------------------------
+# --- вышестоящие DNS (forwarders для BIND в LAN) ----------------------------------------
 def resolv_file() -> Path:
     return Path(settings.data_dir) / "resolv.wan"
 
@@ -94,7 +94,7 @@ def system_nameservers() -> list[str]:
 
 
 def write_upstream_dns(dns: list[str]) -> None:
-    """dnsmasq сам следит за этим файлом и подхватывает изменения без перезапуска.
+    """Список DNS провайдера; BIND берёт из него forwarders (если они не заданы вручную).
 
     Если поднят VPN в режиме «весь трафик» и у него есть DNS — они важнее DNS провайдера
     (иначе DNS-запросы утекали бы мимо туннеля).
@@ -106,7 +106,14 @@ def write_upstream_dns(dns: list[str]) -> None:
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".resolv.")
     with os.fdopen(fd, "w") as f:
         f.write("".join(f"nameserver {s}\n" for s in servers))
+    old = path.read_text() if path.exists() else None
     os.replace(tmp, path)
+    if old != path.read_text():
+        try:
+            from app.services import dns
+            dns.on_upstream_changed()
+        except Exception as e:  # DNS не должен мешать WAN
+            print(f"[wan] WARNING: DNS: {e}")
 
 
 def refresh_upstream_dns() -> None:

@@ -276,7 +276,7 @@ def _names() -> dict[str, str]:
     try:
         from app.services import lan
         names = {l.mac: (l.name or l.hostname) for l in lan.leases() if l.name or l.hostname}
-        names.update({s.mac: s.name for s in lan.static_leases() if s.name})
+        names.update({s.mac: s.name for s in lan.all_static() if s.name})
         return names
     except Exception:
         return {}

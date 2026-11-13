@@ -147,6 +147,7 @@ def validate_config(data) -> None:
     """Проверить весь router.yaml теми же моделями, что и API. Ошибка -> SysError 422."""
     from app.models.l2tp import L2tpConfig
     from app.models.lan import LanConfig, StaticLease
+    from app.models.dns import DnsConfig
     from app.models.routing import RoutingConfig
     from app.models.wan import WanConfig
     from app.models.wireguard import WgConfig
@@ -168,6 +169,10 @@ def validate_config(data) -> None:
         for d in fw.get("forwards") or []:
             firewall_rules.PortForward(**firewall_rules._from_yaml(d, firewall_rules._FWD_KEYS))
         RoutingConfig.model_validate(data.get("routing") or {})
+        for item in data.get("lans") or []:
+            LanConfig.from_yaml(item, data.get("firewall"))
+        if data.get("dns") is not None:
+            DnsConfig.model_validate(data["dns"])
         for section in ("addresses", "routes"):
             items = (data.get("ip") or {}).get(section) or []
             if not isinstance(items, list):
@@ -350,7 +355,7 @@ def audit_log(limit: int = 200) -> list[dict]:
 
 # --- перезапуск ------------------------------------------------------------------------------------------------
 def restart_service() -> None:
-    """Завершить процесс: uvicorn корректно остановит DHCP, dnsmasq и VPN, Docker запустит контейнер заново."""
+    """Завершить процесс: uvicorn корректно остановит DHCP, DNS и VPN, Docker запустит контейнер заново."""
     def later():
         time.sleep(1)
         os.kill(os.getpid(), signal.SIGTERM)

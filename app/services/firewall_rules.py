@@ -83,10 +83,11 @@ def _port_range(ports: str) -> tuple[int, int]:
 
 def _check_forward(fwd: PortForward, others: list[tuple[int, PortForward]]) -> None:
     from app.services import lan
-    cfg = lan.get_config()
-    net = ipaddress.ip_interface(cfg.address).network
-    if ipaddress.ip_address(fwd.to_ip) not in net:
-        raise RuleError(400, f"{fwd.to_ip} не в сети LAN {net}")
+    segs = [s for s in lan.segments() if s.enabled] or [lan.get_config()]
+    cfg = next((s for s in segs if ipaddress.ip_address(fwd.to_ip) in s.network), None)
+    if not cfg:
+        nets = ", ".join(str(s.network) for s in segs)
+        raise RuleError(400, f"{fwd.to_ip} не в сети LAN {nets}")
     if ipaddress.ip_address(fwd.to_ip) == ipaddress.ip_interface(cfg.address).ip:
         raise RuleError(400, "это адрес самого роутера — для доступа к роутеру нужно правило «Входящие»")
     lo, hi = _port_range(fwd.wan_port)
@@ -191,18 +192,20 @@ def delete_forward(fid: int) -> None:
 def status() -> FirewallStatus:
     from app.services import lan, vpn
     cfg = lan.get_config()
+    active = [x for x in lan.segments() if x.enabled]
     wan_if = lan.wan_interface()
     vpn_rules = vpn.firewall_rules()
     c = firewall.counters()
     return FirewallStatus(
         active=firewall.is_active(),
-        zones={"wan": wan_if, "lan": lan.BRIDGE if cfg.enabled else None,
+        zones={"wan": wan_if, "lan": ", ".join(x.bridge for x in active) or None,
                "vpn": vpn_rules.iface if vpn_rules else None},
         rules=[FirewallRuleView(id=rid, **r.model_dump(), packets=c.get(f"rule:{rid}", (0, 0))[0],
                                 bytes=c.get(f"rule:{rid}", (0, 0))[1]) for rid, r in rules()],
         forwards=[PortForwardView(id=fid, **f.model_dump(), packets=c.get(f"fwd:{fid}", (0, 0))[0],
                                   bytes=c.get(f"fwd:{fid}", (0, 0))[1]) for fid, f in forwards()],
-        system=firewall.system_rules(wan_if, cfg.wan_management, vpn_rules, firewall.routing_rules()),
+        system=firewall.system_rules(wan_if, cfg.wan_management, vpn_rules, firewall.routing_rules(),
+                                     firewall.segment_links_named(active)),
         management_ports=firewall.management_ports(),
     )
 

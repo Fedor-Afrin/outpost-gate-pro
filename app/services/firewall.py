@@ -67,7 +67,7 @@ def render_rule(rule: FirewallRule, rid: int, ifaces: dict[str, str | None]) -> 
             iface = ifaces.get(zone)
             if not iface:
                 return f"{I}# rule:{rid} пропущено — зона {zone} сейчас не активна\n"
-            parts.append(f'{key} "{iface}"')
+            parts.append(f"{key} {ifset(iface)}")
     if rule.src:
         parts.append(f"ip saddr {rule.src}")
     if rule.dst:
@@ -85,6 +85,16 @@ def render_rule(rule: FirewallRule, rid: int, ifaces: dict[str, str | None]) -> 
     return I + " ".join(parts) + "\n"
 
 
+def ifset(names) -> str:
+    """'br-lan' -> "br-lan"; ['br-lan', 'br-lan2'] -> { "br-lan", "br-lan2" }"""
+    if isinstance(names, str):
+        names = [names]
+    names = list(names)
+    if len(names) == 1:
+        return f'"{names[0]}"'
+    return "{ " + ", ".join(f'"{n}"' for n in names) + " }"
+
+
 def render_forward(fwd: PortForward, fid: int, wan: str) -> str:
     proto = "{ tcp, udp }" if fwd.protocol == "tcp+udp" else fwd.protocol
     src = f"ip saddr {fwd.src} " if fwd.src else ""
@@ -94,13 +104,14 @@ def render_forward(fwd: PortForward, fid: int, wan: str) -> str:
 
 
 # --- весь ruleset ---------------------------------------------------------------------
-def render_routing(routing: RoutingRules | None, lan: str) -> str:
+def render_routing(routing: RoutingRules | None, lan) -> str:
     """OSPF и BGP: до правил «из туннеля только ответы» и «с WAN всё запрещено»."""
     if not routing:
         return ""
     out = ""
+    lans = [lan] if isinstance(lan, str) else list(lan)
     for iface in routing.ospf_ifaces:
-        if iface != lan:   # из LAN и так разрешено всё
+        if iface not in lans:   # из LAN и так разрешено всё
             out += f'{I}iifname "{iface}" ip protocol 89 accept   # OSPF\n'
     if routing.bgp_peers:
         peers = ", ".join(routing.bgp_peers)
@@ -108,10 +119,14 @@ def render_routing(routing: RoutingRules | None, lan: str) -> str:
     return out
 
 
-def ruleset(wan: str, lan: str, wan_management: bool, vpn: VpnRules | None = None,
+def ruleset(wan: str, lan, wan_management: bool, vpn: VpnRules | None = None,
             rules: list[tuple[int, FirewallRule]] = (), forwards: list[tuple[int, PortForward]] = (),
-            routing: RoutingRules | None = None) -> str:
-    ifaces = {"wan": wan, "lan": lan, "vpn": vpn.iface if vpn else None}
+            routing: RoutingRules | None = None, links: list[tuple[str, str]] = ()) -> str:
+    """lan — мост или список мостов сегментов; links — разрешённый транзит между сегментами
+    [(мост-откуда, мост-куда)]; без него сегменты друг друга не видят."""
+    lans = [lan] if isinstance(lan, str) else list(lan)
+    lan = ifset(lans)
+    ifaces = {"wan": wan, "lan": lans, "vpn": vpn.iface if vpn else None}
     user_in = "".join(render_rule(r, rid, ifaces) for rid, r in rules if r.enabled and r.chain == "input")
     user_fwd = "".join(render_rule(r, rid, ifaces) for rid, r in rules if r.enabled and r.chain == "forward")
     active_fwd = [(fid, f) for fid, f in forwards if f.enabled]
@@ -139,11 +154,13 @@ def ruleset(wan: str, lan: str, wan_management: bool, vpn: VpnRules | None = Non
     if vpn and vpn.killswitch:
         forward += f'{I}# kill switch: LAN → WAN напрямую запрещено, только через туннель\n'
     else:
-        forward += f'{I}iifname "{lan}" oifname "{wan}" accept\n'
+        forward += f'{I}iifname {lan} oifname "{wan}" accept\n'
     if vpn:
-        forward += f'{I}iifname "{lan}" oifname "{vpn.iface}" accept\n'
+        forward += f'{I}iifname {lan} oifname "{vpn.iface}" accept\n'
         if vpn.inbound:
-            forward += f'{I}iifname "{vpn.iface}" oifname "{lan}" accept   # центр видит устройства LAN\n'
+            forward += f'{I}iifname "{vpn.iface}" oifname {lan} accept   # центр видит устройства LAN\n'
+    for a, b in links:
+        forward += f'{I}iifname "{a}" oifname "{b}" accept   # транзит между сегментами LAN\n'
 
     post = f'{I}oifname "{wan}" masquerade\n'
     if vpn and vpn.nat:
@@ -161,7 +178,7 @@ table inet {TABLE} {{
         ct state established,related accept
         ct state invalid drop
         iifname "lo" accept
-{user_in_block}{render_routing(routing, lan)}{input_vpn}        iifname != "{wan}" accept            # LAN — без ограничений
+{user_in_block}{render_routing(routing, lans)}{input_vpn}        iifname != "{wan}" accept            # LAN — без ограничений
         ip protocol icmp accept
         udp sport 67 udp dport 68 accept     # ответы DHCP-сервера провайдера
 {ipsec_rules}{mgmt_rule}        drop                                 # всё остальное с WAN
@@ -183,7 +200,7 @@ table inet {TABLE} {{
 
 
 def system_rules(wan: str | None, wan_management: bool, vpn: VpnRules | None,
-                 routing: RoutingRules | None = None) -> dict[str, list[str]]:
+                 routing: RoutingRules | None = None, links_named: list[tuple[str, str]] = ()) -> dict[str, list[str]]:
     """То же, что делают системные правила, — человеческим языком (для веб-интерфейса)."""
     mgmt = ", ".join(str(p) for p in management_ports())
     inp = ["Ответы на соединения, начатые роутером, — разрешены",
@@ -206,6 +223,8 @@ def system_rules(wan: str | None, wan_management: bool, vpn: VpnRules | None,
         fwd.append(f"LAN → VPN ({vpn.iface}) — разрешено")
         if vpn.inbound:
             fwd.append(f"VPN → LAN — разрешено (site-to-site)")
+    for a, b in links_named:
+        fwd.append(f"{a} → {b} — разрешено")
     fwd.append("WAN → LAN — запрещено (кроме проброса портов)")
 
     nat = [f"Masquerade в WAN ({wan})"]
@@ -228,9 +247,9 @@ def apply_text(text: str) -> None:
         raise FirewallError(f"nft: {r.stderr.strip()}")
 
 
-def apply(wan: str, lan: str, wan_management: bool, vpn: VpnRules | None = None,
-          rules=(), forwards=(), routing: RoutingRules | None = None) -> None:
-    apply_text(ruleset(wan, lan, wan_management, vpn, rules, forwards, routing))
+def apply(wan: str, lan, wan_management: bool, vpn: VpnRules | None = None,
+          rules=(), forwards=(), routing: RoutingRules | None = None, links=()) -> None:
+    apply_text(ruleset(wan, lan, wan_management, vpn, rules, forwards, routing, links))
     print(f"[firewall] применён: WAN={wan} LAN={lan} управление с WAN={'да' if wan_management else 'нет'}"
           + (f" VPN={vpn.iface} NAT={'да' if vpn.nat else 'нет'} kill switch={'да' if vpn.killswitch else 'нет'}"
              if vpn else "")
@@ -238,14 +257,27 @@ def apply(wan: str, lan: str, wan_management: bool, vpn: VpnRules | None = None,
 
 
 def context(lan_cfg=None):
-    """(wan, lan, wan_management, vpn, rules, forwards, routing) или None, если LAN выключен."""
+    """(wan, мосты LAN, wan_management, vpn, rules, forwards, routing, links) или None, если LAN выключен."""
     from app.services import firewall_rules, lan, routing, vpn   # здесь, чтобы не было циклического импорта
-    cfg = lan_cfg or lan.get_config()
+    segs = lan.segments()
+    if lan_cfg is not None:
+        segs = [lan_cfg if s.id == lan_cfg.id else s for s in segs]
+    active = [s for s in segs if s.enabled]
     wan_if = lan.wan_interface()
-    if not (cfg.enabled and wan_if):
+    if not (active and wan_if):
         return None
-    return (wan_if, lan.BRIDGE, cfg.wan_management, vpn.firewall_rules(),
-            firewall_rules.rules(), firewall_rules.forwards(), routing_rules())
+    return (wan_if, [s.bridge for s in active], segs[0].wan_management, vpn.firewall_rules(),
+            firewall_rules.rules(), firewall_rules.forwards(), routing_rules(), segment_links(active))
+
+
+def segment_links(active) -> list[tuple[str, str]]:
+    by_id = {s.id: s for s in active}
+    return [(s.bridge, by_id[t].bridge) for s in active for t in s.forward_to if t in by_id]
+
+
+def segment_links_named(active) -> list[tuple[str, str]]:
+    by_id = {s.id: s for s in active}
+    return [(s.name, by_id[t].name) for s in active for t in s.forward_to if t in by_id]
 
 
 def routing_rules() -> RoutingRules | None:
@@ -265,7 +297,7 @@ def refresh(lan_cfg=None) -> None:
     """
     from app.services import lan
     ctx = context(lan_cfg)
-    if not ctx or not lan.load_state().get("address"):
+    if not ctx or not any(lan.load_state(s.id).get("address") for s in lan.segments() if s.enabled):
         remove()   # фаервол работает вместе с LAN
         return
     apply(*ctx)

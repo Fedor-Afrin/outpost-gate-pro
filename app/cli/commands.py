@@ -276,16 +276,27 @@ def monitor_traffic(ctx, pos, named):
         pass
 
 
-def bridge_print(ctx, pos, named):
+def _segments(ctx) -> list[dict]:
     lan = ctx.api.get("/api/lan")
-    table(ctx, ["name", "address", "ports"],
-          [["br-lan", lan["config"]["address"], [p["name"] for p in lan["ports"] if p["role"] == "lan"]]],
-          flags=["R" if lan["active"] else "X"], legend="R - running, X - disabled")
+    return lan.get("segments") or [{"config": {**lan["config"], "id": "lan1", "name": "LAN"}, "bridge": "br-lan",
+                                    "active": lan["active"],
+                                    "ports": [p["name"] for p in lan["ports"] if p["role"] == "lan"]}]
+
+
+def bridge_print(ctx, pos, named):
+    segs = _segments(ctx)
+    table(ctx, ["name", "segment", "address", "ports", "domain"],
+          [[s["bridge"], s["config"].get("name"), s["config"]["address"], s.get("ports", []),
+            s["config"].get("domain")] for s in segs],
+          flags=["R" if s["active"] else "X" for s in segs], legend="R - running, X - disabled")
 
 
 def bridge_port_print(ctx, pos, named):
-    ports = [p for p in ctx.api.get("/api/lan")["ports"] if p["role"] == "lan"]
-    table(ctx, ["interface", "bridge", "mac-address"], [[p["name"], "br-lan", p.get("mac")] for p in ports],
+    lan = ctx.api.get("/api/lan")
+    bridges = {s["config"].get("id", "lan1"): s["bridge"] for s in _segments(ctx)}
+    ports = [p for p in lan["ports"] if p["role"] == "lan"]
+    table(ctx, ["interface", "bridge", "mac-address"],
+          [[p["name"], bridges.get(p.get("segment") or "lan1", "br-lan"), p.get("mac")] for p in ports],
           flags=["" if p["link_up"] else "I" for p in ports], legend="I - inactive (нет линка)")
 
 
@@ -416,30 +427,40 @@ def arp_print(ctx, pos, named):
 
 
 # --- /ip dhcp-server, pool, dhcp-client ----------------------------------------------------------------------
+def _dhcp(ctx) -> dict:
+    return ctx.api.get("/api/dhcp")
+
+
 def dhcp_print(ctx, pos, named):
-    c = ctx.api.get("/api/lan")["config"]
+    segs = _dhcp(ctx)["segments"]
     table(ctx, ["name", "interface", "address-pool", "lease-time"],
-          [["dhcp-lan", "br-lan", "pool-lan", c["lease_time"]]],
-          flags=["" if c["enabled"] and c["dhcp_enabled"] else "X"], legend="X - disabled")
+          [[f'dhcp-{s["id"]}', s["bridge"], f'pool-{s["id"]}', s["settings"]["lease_time"]] for s in segs],
+          flags=["" if s["enabled"] and s["settings"]["dhcp_enabled"] else "X" for s in segs], legend="X - disabled")
 
 
 def dhcp_network_print(ctx, pos, named):
-    c = ctx.api.get("/api/lan")["config"]
-    iface = ipaddress.ip_interface(c["address"])
-    table(ctx, ["address", "gateway", "dns-server", "domain"],
-          [[str(iface.network), str(iface.ip), str(iface.ip), "lan"]])
+    segs = _dhcp(ctx)["segments"]
+    rows = []
+    for s in segs:
+        o = s["settings"]["dhcp_options"]
+        ip = s["address"].split("/")[0]
+        dns = o.get("dns_servers") or ([ip] if s["dns_enabled"] else ["(провайдер)"])
+        rows.append([s["network"], ip, dns, s.get("domain"), o.get("ntp_servers") or None])
+    table(ctx, ["address", "gateway", "dns-server", "domain", "ntp-server"], rows)
 
 
 def pool_print(ctx, pos, named):
-    c = ctx.api.get("/api/lan")["config"]
-    table(ctx, ["name", "ranges"], [["pool-lan", f'{c["pool_start"]}-{c["pool_end"]}']])
+    segs = _dhcp(ctx)["segments"]
+    table(ctx, ["name", "ranges"],
+          [[f'pool-{s["id"]}', f'{s["settings"]["pool_start"]}-{s["settings"]["pool_end"]}'] for s in segs])
 
 
 def lease_print(ctx, pos, named):
-    lan = ctx.api.get("/api/lan")
-    leases = {l["mac"]: l for l in lan["leases"]}
+    d = _dhcp(ctx)
+    leases = {l["mac"]: l for l in d["leases"]}
     rows, flags, items = [], [], []
-    for s in lan["static_leases"]:                                    # закреплённые — первыми
+    static = [x for seg in d["segments"] for x in seg["static_leases"]]
+    for s in static:                                                  # закреплённые — первыми
         l = leases.pop(s["mac"], {})
         rows.append([s["ip"], s["mac"], s.get("name") or l.get("hostname"), l.get("vendor"),
                      "bound" if l else "waiting"])
@@ -645,10 +666,95 @@ def nat_remove(ctx, pos, named):
 
 # --- /ip dns, /ip service ---------------------------------------------------------------------------------------
 def dns_print(ctx, pos, named):
-    w = ctx.api.get("/api/wan")
-    lan = ctx.api.get("/api/lan")
-    kv(ctx, [("servers", w["dns"]), ("allow-remote-requests", lan["dns_dhcp_running"]),
-             ("listen", lan["config"]["address"].split("/")[0] if lan["active"] else "-"), ("domain", "lan")])
+    d = ctx.api.get("/api/dns")
+    c = d["config"]
+    kv(ctx, [("servers", c["forwarders"] or "auto"), ("dynamic-servers", d["forwarders"]),
+             ("allow-remote-requests", d["running"]), ("listen", d["listen"] or "-"),
+             ("forward-only", c["forward_only"]), ("dnssec", c["dnssec"]),
+             ("cache-size", f'{c["cache_mb"]}MiB'), ("zones", [z["name"] for z in d["zones"]])])
+
+
+def dns_set(ctx, pos, named):
+    d = ctx.api.get("/api/dns")
+    c = d["config"]
+    if "servers" in named:
+        c["forwarders"] = [x for x in named["servers"].split(",") if x.strip()]
+    if "forward-only" in named:
+        c["forward_only"] = yes(named["forward-only"])
+    if "dnssec" in named:
+        c["dnssec"] = yes(named["dnssec"])
+    if "cache-size" in named:
+        c["cache_mb"] = int(named["cache-size"].lower().rstrip("mib").rstrip("m") or 64)
+    ctx.api.put("/api/dns", c)
+
+
+DNS_TYPES = ["A", "AAAA", "CNAME", "MX", "TXT", "SRV", "PTR", "NS", "CAA"]
+
+
+def _zone_of(zones: list[dict], fqdn: str) -> tuple[dict, str]:
+    """pbx.office.lan -> (зона office.lan, имя pbx); самая длинная подходящая зона."""
+    fqdn = fqdn.rstrip(".").lower()
+    best = None
+    for z in zones:
+        if fqdn == z["name"] or fqdn.endswith("." + z["name"]):
+            if best is None or len(z["name"]) > len(best["name"]):
+                best = z
+    if not best:
+        raise CliError(f"нет зоны для {fqdn}: создайте её во вкладке DNS")
+    rel = "@" if fqdn == best["name"] else fqdn[: -len(best["name"]) - 1]
+    return best, rel
+
+
+def dns_static_print(ctx, pos, named):
+    d = ctx.api.get("/api/dns")
+    items, rows, flags = [], [], []
+    for z in d["config"]["zones"]:
+        for r in z["records"]:
+            items.append((z["name"], r))
+            fq = z["name"] if r["name"] == "@" else f'{r["name"]}.{z["name"]}'
+            val = r["value"] if r["type"] not in ("MX", "SRV") else \
+                f'{r.get("priority")} ' + (f'{r.get("weight")} {r.get("port")} ' if r["type"] == "SRV" else "") + r["value"]
+            rows.append([fq, r["type"], val, r.get("ttl") or z["ttl"], r.get("comment")])
+            flags.append("")
+    for a in d["auto_names"]:
+        fq = f'{a["name"]}.{a["zone"]}'
+        rows.append([fq, a["type"], a["value"], "", a["source"]])
+        flags.append("D")
+    ctx.numbers["/ip dns static"] = items + [None] * (len(rows) - len(items))
+    table(ctx, ["name", "type", "address", "ttl", "comment"], rows, flags=flags,
+          legend="D - dynamic (из DHCP, router, PTR)")
+
+
+def dns_static_add(ctx, pos, named):
+    require(named, "name")
+    d = ctx.api.get("/api/dns")
+    c = d["config"]
+    zone, rel = _zone_of(c["zones"], named["name"])
+    rtype = named.get("type", "A").upper()
+    value = named.get("address") or named.get("cname") or named.get("text") or named.get("value") \
+        or named.get("mx-exchange") or named.get("srv-target") or named.get("ns")
+    if not value:
+        raise CliError("укажите значение: address=, cname=, text=, mx-exchange=, srv-target= или value=")
+    rec = {"name": rel, "type": rtype, "value": value}
+    for k, f in (("ttl", "ttl"), ("mx-preference", "priority"), ("srv-priority", "priority"),
+                 ("srv-weight", "weight"), ("srv-port", "port")):
+        if k in named:
+            rec[f] = int(named[k])
+    if named.get("comment"):
+        rec["comment"] = named["comment"]
+    zone["records"].append(rec)
+    ctx.api.put("/api/dns", c)
+
+
+def dns_static_remove(ctx, pos, named):
+    picked = pick(ctx, "/ip dns static", pos, named)
+    if any(p is None for p in picked):
+        raise CliError("failure: dynamic item can not be changed (имя добавлено из DHCP)")
+    c = ctx.api.get("/api/dns")["config"]
+    for zname, rec in picked:
+        z = next(x for x in c["zones"] if x["name"] == zname)
+        z["records"] = [r for r in z["records"] if r != rec]
+    ctx.api.put("/api/dns", c)
 
 
 def service_print(ctx, pos, named):
@@ -1224,7 +1330,20 @@ ROOT = Menu("OutpostGate Pro", {
         }),
         "dhcp-client": Menu("DHCP-клиент WAN", {"print": pr(dhcp_client_print),
                                                  "renew": Cmd(dhcp_client_renew, "обновить аренду")}),
-        "dns": Menu("DNS", {"print": Cmd(dns_print, P)}),
+        "dns": Menu("DNS-сервер (BIND)", {
+            "print": Cmd(dns_print, P),
+            "set": Cmd(dns_set, "set servers=1.1.1.1,8.8.8.8 forward-only=no dnssec=no cache-size=64MiB",
+                       ("servers", "forward-only", "dnssec", "cache-size"),
+                       {"forward-only": YESNO, "dnssec": YESNO}),
+            "static": Menu("записи зон", {
+                "print": pr(dns_static_print),
+                "add": Cmd(dns_static_add, "add name=pbx.office.lan address=192.168.88.5 | type=CNAME cname=pbx",
+                           ("name", "type", "address", "cname", "text", "value", "mx-exchange", "mx-preference",
+                            "srv-target", "srv-priority", "srv-weight", "srv-port", "ns", "ttl", "comment"),
+                           {"type": DNS_TYPES}),
+                "remove": Cmd(dns_static_remove, "удалить: remove 0", ("numbers",)),
+            }),
+        }),
         "service": Menu("службы управления", {"print": pr(service_print)}),
         "firewall": Menu("фаервол", {
             "filter": Menu("правила", {

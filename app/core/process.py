@@ -1,4 +1,4 @@
-"""Долгоживущие фоновые процессы (amneziawg-go, charon, xl2tpd), которыми управляет роутер."""
+"""Долгоживущие фоновые процессы (amneziawg-go, charon, xl2tpd, kea-dhcp4, named), которыми управляет роутер."""
 from __future__ import annotations
 
 import subprocess
@@ -20,6 +20,14 @@ class ManagedProcess:
                 return
             self._proc = subprocess.Popen(cmd, env=env)   # вывод — в docker logs
             print(f"[proc] {self.name} запущен (pid {self._proc.pid})")
+
+    def signal(self, sig: int) -> bool:
+        """Послать сигнал (SIGHUP — перечитать конфигурацию). False — процесс не запущен."""
+        with self._lock:
+            if not self.running():
+                return False
+            self._proc.send_signal(sig)
+            return True
 
     def stop(self, timeout: float = 5.0) -> None:
         with self._lock:

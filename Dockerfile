@@ -19,7 +19,8 @@ FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         iproute2 nftables iputils-ping traceroute tcpdump procps busybox \
-        dnsmasq-base ieee-data wireguard-tools \
+        ieee-data wireguard-tools \
+        kea-dhcp4-server bind9 bind9-utils bind9-dnsutils \
         strongswan-charon strongswan-swanctl xl2tpd ppp \
         frr frr-pythontools \
     && rm -rf /var/lib/apt/lists/*
