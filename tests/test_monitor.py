@@ -305,3 +305,19 @@ def test_firewall_monitor_rules(env):
     # только LAN (списки пустые) — дополнительных правил нет
     exporters.update({"snmp": {"enabled": True}})
     assert exporters.firewall_rules() == []
+
+
+def test_initconfig_and_host_ssh_port(monkeypatch):
+    import json
+    from app.scripts import initconfig
+    d = initconfig.build({"identity": "office", "timezone": "Asia/Jerusalem",
+                          "wan": {"interface": "ens18", "mode": "none"},
+                          "wan2": {"interface": "ens20", "mode": "dhcp"}, "multiwan_mode": "balance",
+                          "lan": {"address": "192.168.88.1/24", "ports": ["ens19"], "wan_management": True}})
+    assert d["wan"] == {"interface": "ens18", "mode": "none"} and d["wan2"]["enabled"] is True
+    assert d["lan"]["ports"] == ["ens19"] and d["lan"]["enabled"] is True and d["multiwan"]["mode"] == "balance"
+    assert d["firewall"] == {"wan-management": True} and d["ntp"]["timezone"] == "Asia/Jerusalem"
+    assert initconfig.main(["x", json.dumps({"wan": {"interface": "ens18", "mode": "static"}, "lan": {}})]) == 2
+    monkeypatch.setenv("HOST_SSH_PORT", "22")
+    monkeypatch.setenv("CLI_SSH_PORT", "2222")
+    assert firewall.management_ports() == [22, 2222, 8000]
