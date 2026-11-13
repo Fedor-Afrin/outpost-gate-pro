@@ -482,3 +482,16 @@ def test_smb_cli(ctx):
     assert "anna" in out[1]
     c.execute(cx, "/ip smb set enabled=no segments=lan2", [])
     assert cx.api.calls[-1][2]["enabled"] is False and cx.api.calls[-1][2]["segments"] == ["lan2"]
+
+
+def test_vlan_print(ctx):
+    cx, out = ctx
+    cx.api.data["/api/wan"] = {"interface": "eth1.100", "config": {"interface": "eth1", "mode": "dhcp", "vlan_id": 100}}
+    cx.api.data["/api/lan"] = {**cx.api.data.get("/api/lan", {}), "segments": [
+        {"config": {"id": "lan1", "name": "LAN", "address": "192.168.88.1/24", "trunk_ports": [], "vlan_id": None},
+         "bridge": "br-lan", "active": True},
+        {"config": {"id": "lan2", "name": "Phones", "address": "10.30.0.1/24", "trunk_ports": ["eth2", "eth3"], "vlan_id": 30},
+         "bridge": "br-lan2", "active": True}]}
+    c.execute(cx, "/interface vlan print", [])
+    assert out[2].split()[:5] == ["0", "R", "eth1.100", "100", "eth1"]
+    assert out[3].split()[:5] == ["1", "R", "eth2.30", "30", "eth2"] and "Phones" in out[4]

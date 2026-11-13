@@ -136,6 +136,7 @@ function fillWanForm(w) {
   f.gateway.value = c.gateway ?? "";
   f.dns1.value = c.dns[0] ?? "";
   f.dns2.value = c.dns[1] ?? "";
+  f.vlan_id.value = c.vlan_id ?? "";
   wanModeChanged();
 }
 
@@ -168,6 +169,7 @@ $("#wan-form").addEventListener("submit", async (ev) => {
       address: mode === "static" ? f.get("address") || null : null,
       gateway: mode === "static" ? f.get("gateway") || null : null,
       dns: [f.get("dns1"), f.get("dns2")].filter(Boolean),
+      vlan_id: f.get("vlan_id") ? Number(f.get("vlan_id")) : null,
     });
     fillWanForm(w);
     $("#wan-ok").textContent = "Применено";
@@ -232,6 +234,11 @@ function fillLanForm() {
     return `<label class="check"><input type="checkbox" name="port" value="${esc(p.name)}" ${mine ? "checked" : ""}
       ${busy ? 'disabled data-busy="1"' : ""}> ${esc(p.name)}${busy ? ` <span class="hint">(${esc(segName(owner[p.name]))})</span>` : ""}</label>`;
   }).join("") || '<span class="hint">нет свободных портов</span>';
+  f.vlan_id.value = c.vlan_id ?? "";
+  const trunkCandidates = lanData.ports.filter((p) => !p.name.includes("."));
+  $("#lan-trunk-list").innerHTML = trunkCandidates.map((p) => `<label class="check"><input type="checkbox" name="trunk" value="${esc(p.name)}"
+    ${(c.trunk_ports || []).includes(p.name) ? "checked" : ""}> ${esc(p.name)}${p.role === "wan" ? ' <span class="hint">(WAN)</span>' : ""}</label>`).join("")
+    || '<span class="hint">нет портов</span>';
   f.dns_enabled.checked = c.dns_enabled;
   f.domain.value = c.domain ?? "";
   $("#lan-forward").innerHTML = segs.filter((s) => s.config.id !== lanSeg).map((s) => `
@@ -258,6 +265,7 @@ async function loadLan() {
   $("#ls-clients").textContent = seg ? seg.clients : "—";
   $("#lan-ports").innerHTML = l.ports.map((p) => `
     <tr><td>${esc(p.name)}</td><td>${ROLE[p.role]}</td><td>${p.segment ? esc(segName(p.segment)) : "—"}</td>
+        <td>${(p.vlans || []).map(esc).join(", ") || "—"}</td>
         <td>${p.link_up ? '<span class="flag-r">есть</span>' : '<span class="flag-x">нет</span>'}</td>
         <td>${esc(p.mac)}</td></tr>`).join("");
   if (lanFormFor !== lanSeg) fillLanForm();
@@ -285,6 +293,8 @@ $("#lan-form").addEventListener("submit", async (ev) => {
   const body = { ...base, id: lanSeg === "new" ? "lan2" : lanSeg, enabled: f.enabled.checked, name: f.name.value.trim(),
     address: f.address.value.trim(), ports, dns_enabled: f.dns_enabled.checked, domain: f.domain.value.trim() || null,
     forward_to: [...f.querySelectorAll("input[name=forward_to]:checked")].map((i) => i.value),
+    vlan_id: f.vlan_id.value ? Number(f.vlan_id.value) : null,
+    trunk_ports: [...f.querySelectorAll("input[name=trunk]:checked")].map((i) => i.value),
     wan_management: lanSeg === "lan1" ? f.wan_management.checked : base.wan_management };
   try {
     if (lanSeg === "new") {

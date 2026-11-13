@@ -134,13 +134,23 @@ def _validate_all(segs: list[LanConfig]) -> None:
             if a.network.overlaps(b.network):
                 raise LanError(400, f"сети сегментов {a.name} ({a.network}) и {b.name} ({b.network}) пересекаются")
     used: dict[str, str] = {}
+    vids: dict[int, str] = {}
+    wan_ports = set(_wan_ports())
     for s in active:
-        if s.id != "lan1" and not s.ports:
+        if s.id != "lan1" and not s.ports and not s.trunk_ports:
             raise LanError(400, f"{s.name}: выберите порты — дополнительный сегмент не может быть без портов")
         for p in s.ports:
             if p in used:
                 raise LanError(400, f"порт {p} уже в сегменте {used[p]}")
             used[p] = s.name
+        if s.vlan_id:
+            if s.vlan_id in vids:
+                raise LanError(400, f"VLAN {s.vlan_id} уже у сегмента {vids[s.vlan_id]}")
+            vids[s.vlan_id] = s.name
+            wan_vid = wan.get_config().vlan_id
+            for p in s.trunk_ports:
+                if p in wan_ports and wan_vid == s.vlan_id:
+                    raise LanError(400, f"VLAN {s.vlan_id} на {p} уже занят WAN")
 
 
 # --- порты -------------------------------------------------------------------------
@@ -151,14 +161,28 @@ def wan_interface() -> str | None:
         return None
 
 
+def _wan_ports() -> list[str]:
+    """Интерфейс WAN и, если WAN на VLAN, его физический порт (без тега он не годится для LAN)."""
+    try:
+        st = wan.load_state()
+    except Exception:
+        st = {}
+    out = [x for x in (st.get("interface"), st.get("base")) if x]
+    if not out:
+        w = wan_interface()
+        out = [w] if w else []
+    return out
+
+
 def lan_ports(cfg: LanConfig, wan_if: str | None, taken: set[str] = frozenset()) -> list[str]:
-    """Порты сегмента. lan1 с «auto» — все свободные, кроме WAN и портов других сегментов."""
+    """Порты сегмента без тега. lan1 с «auto» — все свободные, кроме WAN и портов других сегментов."""
     existing = set(wan.candidates())
+    exclude = set(_wan_ports()) | ({wan_if} if wan_if else set())
     if cfg.ports:
-        return [p for p in cfg.ports if p in existing and p != wan_if]
+        return [p for p in cfg.ports if p in existing and p not in exclude]
     if cfg.id != "lan1":
         return []
-    return [p for p in sorted(existing) if p != wan_if and p not in taken]
+    return [p for p in sorted(existing) if p not in exclude and p not in taken]
 
 
 def _check_overlap(cfg: LanConfig, wan_if: str | None) -> None:
@@ -201,6 +225,11 @@ def teardown(state: dict, seg_id: str = "lan1") -> None:
             netlink.addr_add(port, cidr)
         except netlink.NetlinkOpError as e:
             print(f"[lan] WARNING: {e}")
+    for vif in state.get("vlans", []):
+        try:
+            netlink.link_delete(vif)
+        except netlink.NetlinkOpError as e:
+            print(f"[lan] WARNING: {e}")
     if state.get("bridge"):
         netlink.link_delete(bridge)
     save_state({}, seg_id)
@@ -211,7 +240,7 @@ def setup(cfg: LanConfig, wan_if: str, taken: set[str] = frozenset()) -> list[st
     ports = lan_ports(cfg, wan_if, taken)
     bridge = cfg.bridge
 
-    state: dict = {"bridge": True, "bridge_name": bridge, "ports": [], "moved": [], "address": None}
+    state: dict = {"bridge": True, "bridge_name": bridge, "ports": [], "moved": [], "address": None, "vlans": []}
     mac = netlink.link_info(ports[0]).get("mac") if ports else None
     netlink.bridge_create(bridge, mac)
     save_state(state, cfg.id)
@@ -228,11 +257,25 @@ def setup(cfg: LanConfig, wan_if: str, taken: set[str] = frozenset()) -> list[st
         state["ports"].append(port)
         save_state(state, cfg.id)
 
+    existing = set(wan.candidates())
+    for parent in cfg.trunk_ports if cfg.vlan_id else []:
+        if parent not in existing:
+            print(f"[lan] WARNING: {cfg.name}: порта {parent} нет — VLAN {cfg.vlan_id} на нём пропущен")
+            continue
+        vif = netlink.vlan_name(parent, cfg.vlan_id)
+        netlink.link_set_up(parent)
+        netlink.vlan_create(vif, parent, cfg.vlan_id)
+        state["vlans"].append(vif)
+        save_state(state, cfg.id)
+        netlink.link_set_master(vif, bridge)
+        netlink.link_set_up(vif)
+
     netlink.link_set_up(bridge)
     netlink.addr_add(bridge, cfg.address)
     state["address"] = cfg.address
     save_state(state, cfg.id)
-    print(f"[lan] {cfg.name}: {bridge} {cfg.address}, порты: {', '.join(ports) or 'нет'}")
+    tagged = f", VLAN {cfg.vlan_id} на {', '.join(cfg.trunk_ports)}" if state["vlans"] else ""
+    print(f"[lan] {cfg.name}: {bridge} {cfg.address}, порты: {', '.join(ports) or 'нет'}{tagged}")
     return ports
 
 
@@ -565,12 +608,23 @@ def status() -> LanStatus:
     cfg = segs[0]
     wan_if = wan_interface()
     in_seg = {p: s.id for s in segs for p in load_state(s.id).get("ports", [])}
+    tagged: dict[str, list[str]] = {}
+    for s in segs:
+        if s.vlan_id and load_state(s.id).get("vlans"):
+            for p in s.trunk_ports:
+                tagged.setdefault(p, []).append(f"{s.vlan_id} ({s.name})")
+    wan_vid = wan.get_config().vlan_id
+    wan_ports = _wan_ports()
 
     ports = []
-    for name in sorted(set(wan.candidates()) | set(in_seg)):
+    for name in sorted((set(wan.candidates()) | set(in_seg)) - {w for w in wan_ports if "." in w}):
         info = netlink.link_info(name)
-        role = "wan" if name == wan_if else ("lan" if name in in_seg else "none")
-        ports.append(Port(name=name, role=role, segment=in_seg.get(name), **info))
+        is_wan = name in wan_ports
+        role = "wan" if is_wan else ("lan" if name in in_seg or name in tagged else "none")
+        vl = list(tagged.get(name, []))
+        if is_wan and wan_vid:
+            vl.insert(0, f"{wan_vid} (WAN)")
+        ports.append(Port(name=name, role=role, segment=in_seg.get(name), vlans=vl, **info))
     ports.sort(key=lambda p: (p.role != "wan", p.name))
 
     all_leases = leases()
