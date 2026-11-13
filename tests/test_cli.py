@@ -587,3 +587,27 @@ def test_scheduler_queue_export_cli(ctx):
     assert cx.api.calls[-1][2]["schedule"] == {"kind": "interval", "every": 15}
     c.execute(cx, '/system scheduler add name=g on-event=lan_segment lan=Guests set-enabled=no cron="0 23 * * *"', [])
     assert cx.api.calls[-1][2]["schedule"] == {"kind": "cron", "cron": "0 23 * * *"} and cx.api.calls[-1][2]["action"]["enabled"] is False
+
+
+def test_resolve_and_ping_by_name(ctx, monkeypatch):
+    """:resolve и ping по имени — через DNS роутера (локальные имена)."""
+    from app.services import tools
+    cx, _ = ctx
+    calls = []
+    monkeypatch.setattr(tools, "resolve_sync",
+                        lambda host, family=None: ("192.168.1.1", "DNS роутера: samba.office.lan"))
+    monkeypatch.setattr(c, "_run_live", lambda ctx_, cmd: calls.append(cmd))
+    out = []
+    monkeypatch.setattr(cx, "out", out.append)
+    c.execute(cx, ":resolve samba", [])
+    c.execute(cx, "/tool ping samba count=1", [])
+    c.execute(cx, "traceroute samba", ["ip", "address"])
+    assert out[0] == "192.168.1.1"
+    assert "samba -> 192.168.1.1 (DNS роутера: samba.office.lan)" in out
+    assert calls[0][-1] == "192.168.1.1" and calls[0][:2] == ["ping", "-4"] and calls[1][-1] == "192.168.1.1"
+
+    def fail(host, family=None):
+        raise tools.ToolError("не удалось разрешить имя nope: имя не найдено (NXDOMAIN)")
+    monkeypatch.setattr(tools, "resolve_sync", fail)
+    with pytest.raises(c.CliError, match="NXDOMAIN"):
+        c.execute(cx, "/ping nope", [])

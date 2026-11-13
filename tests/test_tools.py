@@ -120,3 +120,112 @@ def test_scan_filters_by_interface(monkeypatch):
         {"ip": "192.168.88.12", "mac": "aa:00:00:00:00:02", "vendor": None, "name": None, "interface": "eth0", "state": "STALE"}])
     events = collect(tools.scan({"network": "192.168.88.0/28", "interface": "br-lan"}))
     assert [e["row"]["ip"] for e in events if e["type"] == "row"] == ["192.168.88.11"]
+
+
+# --- DNS роутера ------------------------------------------------------------------------------
+import socket as _socket
+import struct as _struct
+import threading as _threading
+
+ZONE = {"samba.office.lan": ("CNAME", "router.office.lan"), "router.office.lan": ("A", "192.168.1.1"),
+        "nas.office.lan": ("A", "192.168.1.30"), "example.com": ("A", "93.184.216.34")}
+
+
+def _qname(data, pos=12):
+    labels = []
+    while data[pos]:
+        labels.append(data[pos + 1:pos + 1 + data[pos]].decode())
+        pos += data[pos] + 1
+    return ".".join(labels), pos + 1
+
+
+def _enc(name):
+    return b"".join(bytes([len(p)]) + p.encode() for p in name.split(".")) + b"\0"
+
+
+def _answer(data):
+    qid = data[:2]
+    name, pos = _qname(data)
+    qtype = _struct.unpack(">H", data[pos:pos + 2])[0]
+    question = data[12:pos + 4]
+    answers, n = b"", name
+    for _ in range(5):
+        if n not in ZONE:
+            break
+        t, v = ZONE[n]
+        if t == "CNAME":
+            rd = _enc(v)
+            answers += b"\xc0\x0c" + _struct.pack(">HHIH", 5, 1, 60, len(rd)) + rd   # имя — ссылкой на вопрос
+            n = v
+            continue
+        if qtype == 1:
+            rd = _socket.inet_aton(v)
+            answers += _enc(n) + _struct.pack(">HHIH", 1, 1, 60, 4) + rd
+        break
+    count = answers.count(b"\x00\x01\x00\x01\x00\x00\x00\x3c") + answers.count(b"\x00\x05\x00\x01\x00\x00\x00\x3c")
+    rcode = 0 if name in ZONE else 3
+    return qid + _struct.pack(">HHHHH", 0x8180 | rcode, 1, count, 0, 0) + question + answers
+
+
+@pytest.fixture
+def fake_bind(monkeypatch):
+    s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+    s.bind(("127.0.0.1", 0))
+    stop = _threading.Event()
+
+    def serve():
+        s.settimeout(0.2)
+        while not stop.is_set():
+            try:
+                data, addr = s.recvfrom(512)
+            except OSError:
+                continue
+            s.sendto(_answer(data), addr)
+
+    t = _threading.Thread(target=serve, daemon=True)
+    t.start()
+    monkeypatch.setattr(tools, "LOCAL_DNS", s.getsockname())
+    monkeypatch.setattr(tools, "local_domains", lambda: ["office.lan", "guest.lan"])
+    yield
+    stop.set()
+    t.join()
+    s.close()
+
+
+def test_dns_packet_roundtrip():
+    pkt = tools.dns_packet("samba.office.lan.", 1, 0x1234)
+    assert pkt[:2] == b"\x12\x34" and _qname(pkt)[0] == "samba.office.lan"
+    assert tools.parse_dns_reply(_answer(pkt), 0x1234) == (0, ["192.168.1.1"])     # CNAME -> A
+    with pytest.raises(ValueError):
+        tools.parse_dns_reply(_answer(pkt), 0x9999)
+
+
+def test_router_lookup_local_names(fake_bind):
+    r = tools.router_lookup("samba.office.lan", want6=False)
+    assert r == {"name": "samba.office.lan", "addresses": ["192.168.1.1"], "rcode": 0}
+    r = tools.router_lookup("nas", want6=False)                       # короткое имя — с доменом сегмента
+    assert r["name"] == "nas.office.lan" and r["addresses"] == ["192.168.1.30"]
+    r = tools.router_lookup("nothing.office.lan", want6=False)
+    assert r["addresses"] == [] and tools.rcode_text(r["rcode"]).startswith("имя не найдено")
+    assert tools.resolve_sync("samba", 4) == ("192.168.1.1", "DNS роутера: samba.office.lan")
+    assert tools.resolve_sync("10.0.0.1") == ("10.0.0.1", "")
+
+
+def test_dns_lookup_tool(fake_bind):
+    d = asyncio.run(tools.dns_lookup("samba"))
+    assert d["host"] == "samba.office.lan" and d["addresses"] == ["192.168.1.1"]
+    assert d["server"] == "DNS роутера (BIND)" and d["error"] is None
+    d = asyncio.run(tools.dns_lookup("missing.office.lan"))
+    assert d["addresses"] == [] and "NXDOMAIN" in d["error"]
+
+
+def test_bind_down_falls_back(monkeypatch):
+    s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()
+    s.close()                                                         # порт закрыт — BIND «выключен»
+    monkeypatch.setattr(tools, "LOCAL_DNS", port)
+    assert tools.dns_query("x.lan", 1, timeout=0.5) is None
+    assert tools.router_lookup("x.lan") is None
+    monkeypatch.setattr(tools.socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("192.0.2.7", 0))])
+    assert tools.resolve_sync("printer.example") == ("192.0.2.7", "системный DNS")
