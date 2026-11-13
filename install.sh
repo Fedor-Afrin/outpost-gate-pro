@@ -15,6 +15,8 @@
 #    2. убирает выбранные порты из-под netplan/systemd-networkd и NetworkManager —
 #       ими управляет роутер (порт SSH, через который вы подключены, не трогается без вашего согласия);
 #    3. включает маршрутизацию (ip_forward), модули ядра (WireGuard, L2TP, QoS);
+#       снимает FORWARD DROP, оставшийся от Docker, и даёт серверу свои DNS (порт WAN забирает роутер,
+#       и DNS провайдера системе больше не приходят — без этого не соберётся образ при обновлении);
 #    4. собирает образ, пишет первый /etc/outpost-gate-pro/router.yaml и запускает контейнер.
 #  Дальше все настройки — в веб-интерфейсе: http://<адрес LAN>:8000
 # =============================================================================
@@ -35,6 +37,7 @@ NM_FILE=$P/etc/NetworkManager/conf.d/99-outpost-gate.conf
 SYSCTL_FILE=$P/etc/sysctl.d/99-outpost-gate.conf
 MODULES_FILE=$P/etc/modules-load.d/outpost-gate.conf
 DAEMON_JSON=$P/etc/docker/daemon.json
+RESOLVED_FILE=$P/etc/systemd/resolved.conf.d/outpost-gate.conf
 MODULES=(wireguard ppp_generic l2tp_ppp pppox sch_htb sch_fq_codel sch_ingress cls_u32 act_police nf_conntrack 8021q)
 
 # --- вывод --------------------------------------------------------------------------------------
@@ -50,7 +53,7 @@ ACTION=install; YES=0; PURGE=0
 WAN=""; WAN_MODE=""; WAN_ADDR=""; WAN_GW=""; WAN_DNS=""
 WAN2=""; WAN2_MODE=""; WAN2_ADDR=""; WAN2_GW=""; WAN2_DNS=""; MULTIWAN_MODE=""
 LAN=""; LAN_ADDR=""; WAN_MGMT=""; PASSWORD=""; PASSWORD_SET=0
-API_PORT=""; CLI_PORT=""; IDENTITY=""; KEEP_CONFIG=""
+API_PORT=""; CLI_PORT=""; IDENTITY=""; KEEP_CONFIG=""; HOST_DNS=""
 
 usage() {
     sed -n '3,9p' "$0" | sed 's/^#  \{0,1\}//'
@@ -70,6 +73,7 @@ usage() {
   --api-port N  --cli-port N   порты веба (8000) и CLI по SSH (2222)
   --identity NAME           имя роутера
   --keep-config | --new-config   что делать с существующим router.yaml
+  --host-dns "D1 D2"        DNS для самого сервера, когда порт WAN у роутера (по умолчанию 1.1.1.1 8.8.8.8)
 EOF
 }
 
@@ -98,6 +102,7 @@ while [[ $# -gt 0 ]]; do
         --api-port) API_PORT="$2"; shift ;;
         --cli-port) CLI_PORT="$2"; shift ;;
         --identity) IDENTITY="$2"; shift ;;
+        --host-dns) HOST_DNS="${2//,/ }"; shift ;;
         --keep-config) KEEP_CONFIG=yes ;;
         --new-config) KEEP_CONFIG=no ;;
         -h|--help) usage; exit 0 ;;
@@ -383,6 +388,37 @@ EOF
     else
         ok "Docker уже настроен (iptables=false)"
     fi
+    docker_forward_open
+}
+
+docker_forward_open() {
+    # Docker с iptables=false новых правил не ставит, но уже поставленные живут до перезагрузки:
+    # политика FORWARD DROP режет транзит LAN -> WAN (роутер сам пингует, клиенты — нет)
+    local t
+    for t in iptables ip6tables; do
+        command -v "$t" >/dev/null 2>&1 || continue
+        if "$t" -S FORWARD 2>/dev/null | grep -qx -- '-P FORWARD DROP'; then
+            "$t" -P FORWARD ACCEPT && ok "$t: снята политика FORWARD DROP, оставшаяся от Docker"
+        fi
+    done
+}
+
+host_dns() {
+    # порт WAN у роутера: DNS провайдера системе (systemd-resolved) могут больше не приходить —
+    # тогда сервер не находит registry-1.docker.io и образ не собирается. Свои DNS — всегда, это безопасно:
+    # resolved спрашивает и их, и DNS порта, если они есть
+    [[ -n "$WAN" ]] || { rm -f "$RESOLVED_FILE"; return 0; }
+    systemctl is-active -q systemd-resolved || return 0
+    local dns=${HOST_DNS:-"1.1.1.1 8.8.8.8"}
+    mkdir -p "$(dirname "$RESOLVED_FILE")"
+    local new
+    new=$(printf '%s\n' "# OutpostGate Pro: DNS самого сервера — порт WAN у роутера (удаляется install.sh --uninstall)" \
+        "[Resolve]" "DNS=$dns" "FallbackDNS=9.9.9.9")
+    if [[ "$(cat "$RESOLVED_FILE" 2>/dev/null)" != "$new" ]]; then
+        echo "$new" > "$RESOLVED_FILE"
+        systemctl restart systemd-resolved || true
+    fi
+    ok "DNS сервера: $dns"
 }
 
 # --- сеть сервера --------------------------------------------------------------------------------
@@ -442,6 +478,7 @@ EOF
             ip link set "$m" up 2>/dev/null || true
         done
     fi
+    host_dns
 }
 
 # --- конфигурация --------------------------------------------------------------------------------
@@ -521,6 +558,8 @@ LAN_ADDR=$LAN_ADDR
 API_PORT=$API_PORT
 CLI_PORT=$CLI_PORT
 WAN_MGMT=$WAN_MGMT
+WAN_MODE=$WAN_MODE
+HOST_DNS="$HOST_DNS"
 EOF
 }
 
@@ -594,8 +633,18 @@ load_state() {
 
 do_update() {
     [[ $EUID -eq 0 ]] || die "запустите через sudo"
+    local cli_dns=$HOST_DNS
     load_state
+    [[ -n "$cli_dns" ]] && HOST_DNS=$cli_dns          # sudo ./install.sh --update --host-dns "..."
     [[ -f "$DEPLOY/.env" ]] || die "нет $DEPLOY/.env — запустите установку заново"
+    if [[ -z "$WAN_MODE" ]]; then                    # установлено до появления WAN_MODE в install.state
+        WAN_MODE=dhcp
+        grep -qsE "^Name=(.* )?$WAN( |\$)|interface-name:$WAN;" "$NETWORKD_FILE" "$NM_FILE" || WAN_MODE=none
+    fi
+    sed -i '/^WAN_MODE=/d;/^HOST_DNS=/d' "$STATE"
+    printf 'WAN_MODE=%s\nHOST_DNS="%s"\n' "$WAN_MODE" "$HOST_DNS" >> "$STATE"
+    docker_forward_open
+    host_dns
     say "Обновляю: пересборка образа и перезапуск"
     "${COMPOSE[@]}" build
     "${COMPOSE[@]}" up -d --force-recreate
@@ -633,6 +682,7 @@ do_uninstall() {
     if [[ -f "$NETWORKD_FILE" ]]; then rm -f "$NETWORKD_FILE"; networkctl reload >/dev/null 2>&1 || systemctl restart systemd-networkd || true; fi
     if [[ -f "$NM_FILE" ]]; then rm -f "$NM_FILE"; nmcli general reload >/dev/null 2>&1 || true; fi
     rm -f "$SYSCTL_FILE" "$MODULES_FILE"
+    if [[ -f "$RESOLVED_FILE" ]]; then rm -f "$RESOLVED_FILE"; systemctl restart systemd-resolved 2>/dev/null || true; fi
     if [[ -f "$CONF_DIR/daemon.json.orig" ]]; then
         if [[ -s "$CONF_DIR/daemon.json.orig" ]]; then cp -a "$CONF_DIR/daemon.json.orig" "$DAEMON_JSON"; else rm -f "$DAEMON_JSON"; fi
         rm -f "$CONF_DIR/daemon.json.orig"
