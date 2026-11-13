@@ -188,7 +188,7 @@ def test_completion():
     assert c.complete("", []) == sorted(c.ROOT.children)
     assert c.complete("/ip a", []) == ["address", "arp"]
     assert c.complete("/ip ", []) == ["address", "arp", "dhcp-client", "dhcp-server", "dns", "firewall",
-                                      "neighbor", "pool", "route", "service"]
+                                      "neighbor", "pool", "route", "service", "smb"]
     assert c.complete("/ip/ad", []) == ["/ip/address"]
     assert c.complete("add ", ["ip", "address"]) == ["address=", "interface=", "comment=", "disabled="]
     assert c.complete("add disabled=", ["ip", "address"]) == ["disabled=yes", "disabled=no"]
@@ -432,3 +432,53 @@ def test_dhcp_and_dns_cli(ctx):
     c.execute(cx, "/ip dns set servers=9.9.9.9,1.1.1.1 dnssec=yes", [])
     body = cx.api.calls[-1][2]
     assert body["forwarders"] == ["9.9.9.9", "1.1.1.1"] and body["dnssec"] is True
+
+
+FILES = {"running": True, "netbios_name": "OFFICE", "listen": ["192.168.88.1"], "disks_allowed": False, "devices": [],
+         "users_without_password": ["boris"],
+         "sessions": [{"user": "anna", "machine": "192.168.88.20", "protocol": "SMB3_11", "share": "Documents", "open_files": 2}],
+         "config": {"enabled": True, "workgroup": "WORKGROUP", "netbios_name": None, "server_string": "OutpostGate Pro",
+                    "segments": [], "min_protocol": "SMB2_10", "netbios": False, "disks": [],
+                    "users": [{"name": "anna", "groups": ["acc"], "enabled": True, "uid": 20000},
+                              {"name": "boris", "groups": [], "enabled": True, "uid": 20001}],
+                    "groups": [{"name": "acc", "gid": 20002}],
+                    "shares": [{"name": "Documents", "volume": "data", "folder": "docs", "enabled": True, "browseable": True,
+                                "guest": "none", "read_users": ["boris"], "write_users": ["@acc"], "recycle": True,
+                                "macos": False, "hide_dot_files": True}]}}
+
+
+def test_smb_cli(ctx):
+    import copy
+    cx, out = ctx
+    cx.api.data["/api/files"] = copy.deepcopy(FILES)
+    c.execute(cx, "/ip smb print", [])
+    assert any("netbios-name: OFFICE" in l for l in out)
+    out.clear()
+    c.execute(cx, "/ip smb shares print", [])
+    assert out[2].split()[:3] == ["0", "Documents", "data:/docs"]
+    c.execute(cx, "/ip smb shares add name=Public directory=pub guest=write recycle=no", [])
+    body = cx.api.calls[-1][2]
+    assert body["shares"][-1]["volume"] == "data" and body["shares"][-1]["folder"] == "pub" and body["shares"][-1]["guest"] == "write"
+    c.execute(cx, "/ip smb shares set 0 write-users=@acc,anna directory=archive:/old", [])
+    s = cx.api.calls[-1][2]["shares"][0]
+    assert s["write_users"] == ["@acc", "anna"] and (s["volume"], s["folder"]) == ("archive", "old")
+    out.clear()
+    c.execute(cx, "/ip smb users print", [])
+    assert "not set" in out[3]
+    c.execute(cx, "/ip smb users add name=vera password=secret123 groups=acc", [])
+    assert cx.api.calls[-1][:2] == ("POST", "/api/files/users") and cx.api.calls[-1][2]["groups"] == ["acc"]
+    c.execute(cx, "/ip smb users print", [])
+    c.execute(cx, "/ip smb users set 1 password=newpass123", [])
+    assert cx.api.calls[-1][:2] == ("PUT", "/api/files/users/boris/password")
+    c.execute(cx, "/ip smb users remove 1", [])
+    body = cx.api.calls[-1][2]
+    assert [u["name"] for u in body["users"]] == ["anna"] and body["shares"][0]["read_users"] == []
+    c.execute(cx, "/ip smb groups print", [])
+    c.execute(cx, "/ip smb groups remove 0", [])
+    body = cx.api.calls[-1][2]
+    assert body["groups"] == [] and body["users"][0]["groups"] == [] and body["shares"][0]["write_users"] == []
+    out.clear()
+    c.execute(cx, "/ip smb sessions print", [])
+    assert "anna" in out[1]
+    c.execute(cx, "/ip smb set enabled=no segments=lan2", [])
+    assert cx.api.calls[-1][2]["enabled"] is False and cx.api.calls[-1][2]["segments"] == ["lan2"]

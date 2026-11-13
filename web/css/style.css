@@ -188,3 +188,5 @@ a.button { padding: 5px 10px; border: 1px solid #c8ced6; border-radius: 4px; bac
 .table-scroll { overflow-x: auto; max-width: 100%; }
 [dir=rtl] .tab { unicode-bidi: plaintext; }
 .edit-table input[size="22"] { width: 170px; }
+/* Files */
+[dir=rtl] #mount-what { direction: ltr; text-align: right; }

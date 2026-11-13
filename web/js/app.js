@@ -598,6 +598,270 @@ $("#zone-delete").addEventListener("click", async () => {
   }
 });
 
+// ---------------------------------------------------------------- Files (Samba)
+let fsTab = "overview";
+let fsData = null;
+let fsFormLoaded = false;
+let shareEdit = null;           // имя редактируемой папки; "" — новая
+const gb = (n) => (n == null ? "—" : n >= 1e12 ? `${(n / 1e12).toFixed(1)} TB` : n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.round(n / 1e6)} MB`);
+
+function selectFsTab(tab) {
+  fsTab = tab;
+  document.querySelectorAll("#files-tabs .tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === tab));
+  for (const t of ["overview", "shares", "users", "disks"]) $(`#fs-${t}`).hidden = t !== tab;
+  loadFiles().catch(console.error);
+}
+$("#files-tabs").addEventListener("click", (ev) => { const t = ev.target.closest(".tab"); if (t) selectFsTab(t.dataset.tab); });
+
+async function putFiles(config, errBox) {
+  if (errBox) errBox.textContent = "";
+  try {
+    fsData = await api("PUT", "/api/files", config);
+    renderFiles();
+    return true;
+  } catch (e) { if (errBox) errBox.textContent = e.message; return false; }
+}
+
+function fillFilesForm() {
+  const f = $("#files-form"), c = fsData.config;
+  f.enabled.checked = c.enabled;
+  f.workgroup.value = c.workgroup;
+  f.netbios_name.value = c.netbios_name ?? "";
+  f.server_string.value = c.server_string;
+  f.min_protocol.value = c.min_protocol;
+  f.netbios.checked = c.netbios;
+  $("#fs-segments").innerHTML = fsData.segments.map((s) => `<label class="check"><input type="checkbox" name="segment" value="${esc(s.id)}"
+    ${c.segments.includes(s.id) ? "checked" : ""}> ${esc(s.name)} (${esc(s.address)})</label>`).join("");
+  fsFormLoaded = true;
+}
+
+function accessLabel(list) {
+  return list.length ? list.map((x) => esc(x.startsWith("@") ? x : x)).join(", ") : "—";
+}
+const GUEST = { none: "нет", read: "чтение", write: "чтение и запись" };
+
+function renderFiles() {
+  const d = fsData, c = d.config;
+  $("#fs-state").innerHTML = !d.installed ? '<span class="flag-x">нет в образе</span>'
+    : d.running ? '<span class="flag-r">работает</span>' : c.enabled ? '<span class="flag-x">не запущена</span>' : "выключена";
+  $("#fs-name").textContent = d.netbios_name;
+  $("#fs-listen").textContent = d.listen.length ? csv(d.listen) : "—";
+  $("#fs-sess-count").textContent = d.sessions.length;
+  $("#fs-error").textContent = d.error || "";
+  const ip = d.listen[0];
+  $("#fs-howto").textContent = ip ? I18N.t("Windows: \\\\{ip} или \\\\{name} · macOS: smb://{ip} · Linux: smb://{ip}", { ip, name: d.netbios_name }) : "";
+  $("#fs-volumes").innerHTML = d.volumes.map((v) => `<tr><td>${esc(v.name)}</td><td class="mono">${esc(v.path)}</td>
+    <td>${gb(v.size)}</td><td>${gb(v.free)}</td><td>${v.mounted ? '<span class="flag-r">подключён</span>' : '<span class="flag-x">не подключён</span>'}</td></tr>`).join("");
+  $("#fs-sessions").innerHTML = d.sessions.map((s) => `<tr><td>${esc(s.user)}</td><td>${esc(s.machine)}</td><td>${esc(s.protocol ?? "—")}</td>
+    <td>${esc(s.share ?? "—")}</td><td>${s.open_files}</td></tr>`).join("") || '<tr><td colspan="5" class="hint">никого</td></tr>';
+
+  $("#fs-share-list").innerHTML = c.shares.map((s) => `<tr class="${s.enabled ? "" : "row-disabled"}">
+    <td>${esc(s.name)}</td><td class="mono">${esc(s.volume)}:/${esc(s.folder)}</td>
+    <td>${accessLabel(s.read_users)}</td><td>${accessLabel(s.write_users)}</td><td>${GUEST[s.guest]}</td>
+    <td>${s.recycle ? "да" : "—"}</td>
+    <td class="actions"><button type="button" data-share-edit="${esc(s.name)}">Изменить</button>
+      <button type="button" class="danger" data-share-del="${esc(s.name)}">Удалить</button></td></tr>`).join("")
+    || '<tr><td colspan="7" class="hint">общих папок пока нет</td></tr>';
+
+  const nopw = new Set(d.users_without_password);
+  $("#fs-user-list").innerHTML = c.users.map((u) => `<tr class="${u.enabled ? "" : "row-disabled"}">
+    <td>${esc(u.name)}</td><td>${esc(u.full_name ?? "—")}</td><td>${u.groups.map(esc).join(", ") || "—"}</td>
+    <td>${nopw.has(u.name) ? '<span class="flag-x">не задан</span>' : "задан"}</td>
+    <td>${u.enabled ? "включён" : "выключен"}</td>
+    <td class="actions"><button type="button" data-user-pw="${esc(u.name)}">Сменить пароль</button>
+      <button type="button" data-user-toggle="${esc(u.name)}">${u.enabled ? "Выключить" : "Включить"}</button>
+      <button type="button" class="danger" data-user-del="${esc(u.name)}">Удалить</button></td></tr>`).join("")
+    || '<tr><td colspan="6" class="hint">пользователей пока нет</td></tr>';
+  $("#user-groups").innerHTML = c.groups.map((g) => `<label class="check"><input type="checkbox" name="ugroup" value="${esc(g.name)}"> ${esc(g.name)}</label>`).join("")
+    || '<span class="hint">групп пока нет</span>';
+  $("#fs-group-list").innerHTML = c.groups.map((g) => `<tr><td>${esc(g.name)}</td><td>${esc(g.description ?? "—")}</td>
+    <td>${c.users.filter((u) => u.groups.includes(g.name)).map((u) => esc(u.name)).join(", ") || "—"}</td>
+    <td class="actions"><button type="button" class="danger" data-group-del="${esc(g.name)}">Удалить</button></td></tr>`).join("")
+    || '<tr><td colspan="4" class="hint">групп пока нет</td></tr>';
+
+  $("#fs-disks-hint").textContent = d.disks_allowed
+    ? "Подключите диск к серверу (USB, SATA), обновите страницу и нажмите «Подключить» у нужного раздела. Диск, на котором стоит сам сервер, недоступен."
+    : "Управление дисками работает, когда роутер установлен на сервер (режим host). В режиме разработки и в GNS3 общие папки лежат во встроенном томе data.";
+  $("#fs-dev-list").innerHTML = d.devices.map((x) => {
+    const state = x.system ? '<span class="flag-x">системный</span>' : x.mounted_as ? `<span class="flag-r">${esc(x.mounted_as)}</span>` : "—";
+    let act = "";
+    if (!x.system && x.type === "part" && x.uuid && !x.mounted_as) act += `<button type="button" data-mount="${esc(x.uuid)}" data-dev="${esc(x.path)}" data-label="${esc(x.label ?? "")}">Подключить</button> `;
+    if (x.mounted_as) act += `<button type="button" data-unmount="${esc(x.mounted_as)}">Отключить</button> `;
+    if (!x.system && !x.mounted_as) act += `<button type="button" class="danger" data-format="${esc(x.path)}">Форматировать</button>`;
+    return `<tr><td class="mono">${x.type === "part" ? "&nbsp;&nbsp;└ " : ""}${esc(x.path)}</td><td>${esc(x.model ?? (x.transport ? x.transport.toUpperCase() : "—"))}</td>
+      <td>${gb(x.size)}${x.free != null ? ` · ${I18N.t("свободно {f}", { f: gb(x.free) })}` : ""}</td><td>${esc(x.fstype ?? "—")}</td><td>${esc(x.label ?? "—")}</td>
+      <td>${state}</td><td class="actions">${act}</td></tr>`;
+  }).join("") || `<tr><td colspan="7" class="hint">${d.disks_allowed ? "дисков не найдено" : "недоступно в этом режиме"}</td></tr>`;
+}
+
+async function loadFiles() {
+  fsData = await api("GET", "/api/files");
+  if (!fsFormLoaded) fillFilesForm();
+  renderFiles();
+}
+
+$("#files-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const f = ev.target;
+  const c = { ...fsData.config, enabled: f.enabled.checked, workgroup: f.workgroup.value.trim(),
+    netbios_name: opt(f.netbios_name.value), server_string: f.server_string.value.trim(), min_protocol: f.min_protocol.value,
+    netbios: f.netbios.checked, segments: [...f.querySelectorAll("input[name=segment]:checked")].map((i) => i.value) };
+  f.querySelector(".fs-form-ok").textContent = "";
+  if (await putFiles(c, f.querySelector(".fs-form-error"))) { f.querySelector(".fs-form-ok").textContent = "Применено"; fillFilesForm(); }
+});
+
+// --- общие папки ---
+function openShareForm(name) {
+  shareEdit = name;
+  const c = fsData.config;
+  const s = c.shares.find((x) => x.name === name)
+    || { name: "", volume: "data", folder: "", comment: "", enabled: true, browseable: true, guest: "none",
+         read_users: [], write_users: [], recycle: true, macos: false, hide_dot_files: true };
+  const f = $("#share-form");
+  $("#share-form-title").textContent = name ? I18N.t("Папка {name}", { name }) : I18N.t("Новая папка");
+  f.enabled.checked = s.enabled; f.share_name.value = s.name; f.folder.value = s.folder; f.comment.value = s.comment ?? "";
+  f.browseable.checked = s.browseable; f.guest.value = s.guest; f.recycle.checked = s.recycle; f.macos.checked = s.macos;
+  f.hide_dot_files.checked = s.hide_dot_files;
+  f.volume.innerHTML = fsData.volumes.map((v) => `<option value="${esc(v.name)}" ${v.name === s.volume ? "selected" : ""}>${esc(v.name)}</option>`).join("");
+  const who = [...c.groups.map((g) => "@" + g.name), ...c.users.map((u) => u.name)];
+  $("#share-access").innerHTML = who.map((w, i) => {
+    const lvl = s.write_users.includes(w) ? "write" : s.read_users.includes(w) ? "read" : "none";
+    return `<tr><td>${w.startsWith("@") ? `<b>${esc(w)}</b>` : esc(w)}</td>` + ["none", "read", "write"].map((l) =>
+      `<td><input type="radio" name="acc${i}" value="${l}" data-who="${esc(w)}" ${l === lvl ? "checked" : ""}></td>`).join("") + "</tr>";
+  }).join("") || '<tr><td colspan="4" class="hint">сначала создайте пользователей или включите гостей</td></tr>';
+  f.querySelector(".share-error").textContent = "";
+  f.hidden = false;
+  f.scrollIntoView({ behavior: "smooth" });
+}
+
+$("#share-new").addEventListener("click", () => openShareForm(""));
+$("#share-cancel").addEventListener("click", () => { $("#share-form").hidden = true; shareEdit = null; });
+$("#fs-share-list").addEventListener("click", async (ev) => {
+  const e = ev.target.closest("[data-share-edit]");
+  if (e) { openShareForm(e.dataset.shareEdit); return; }
+  const d = ev.target.closest("[data-share-del]");
+  if (d && confirm(I18N.t("Удалить общую папку {name}? Файлы на диске останутся.", { name: d.dataset.shareDel }))) {
+    await putFiles({ ...fsData.config, shares: fsData.config.shares.filter((s) => s.name !== d.dataset.shareDel) },
+                   $("#share-form").querySelector(".share-error"));
+  }
+});
+
+$("#share-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const f = ev.target;
+  const radios = [...f.querySelectorAll("#share-access input[type=radio]:checked")];
+  const share = { name: f.share_name.value.trim(), volume: f.volume.value, folder: f.folder.value.trim() || f.share_name.value.trim().toLowerCase(),
+    comment: opt(f.comment.value), enabled: f.enabled.checked, browseable: f.browseable.checked, guest: f.guest.value,
+    read_users: radios.filter((r) => r.value === "read").map((r) => r.dataset.who),
+    write_users: radios.filter((r) => r.value === "write").map((r) => r.dataset.who),
+    recycle: f.recycle.checked, macos: f.macos.checked, hide_dot_files: f.hide_dot_files.checked };
+  const shares = shareEdit ? fsData.config.shares.map((s) => (s.name === shareEdit ? share : s)) : [...fsData.config.shares, share];
+  if (await putFiles({ ...fsData.config, shares }, f.querySelector(".share-error"))) { f.hidden = true; shareEdit = null; }
+});
+
+// --- пользователи и группы ---
+function withoutRefs(c, who) {
+  const strip = (l) => l.filter((x) => x !== who);
+  return c.shares.map((s) => ({ ...s, read_users: strip(s.read_users), write_users: strip(s.write_users) }))
+    .filter((s) => s.guest !== "none" || s.read_users.length || s.write_users.length);
+}
+
+$("#user-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const f = ev.target, err = f.querySelector(".user-error");
+  err.textContent = "";
+  try {
+    fsData = await api("POST", "/api/files/users", { name: f.login.value.trim(), full_name: opt(f.full_name.value),
+      password: f.password.value, groups: [...f.querySelectorAll("input[name=ugroup]:checked")].map((i) => i.value) });
+    f.reset();
+    renderFiles();
+  } catch (e) { err.textContent = e.message; }
+});
+
+$("#fs-user-list").addEventListener("click", async (ev) => {
+  const err = $("#fs-users .fs-user-error");
+  err.textContent = "";
+  const pw = ev.target.closest("[data-user-pw]");
+  if (pw) {
+    const p = prompt(I18N.t("Новый пароль для {user} (не короче 6 символов):", { user: pw.dataset.userPw }));
+    if (!p) return;
+    try { fsData = await api("PUT", `/api/files/users/${encodeURIComponent(pw.dataset.userPw)}/password`, { password: p }); renderFiles(); }
+    catch (e) { err.textContent = e.message; }
+    return;
+  }
+  const t = ev.target.closest("[data-user-toggle]");
+  if (t) {
+    const users = fsData.config.users.map((u) => (u.name === t.dataset.userToggle ? { ...u, enabled: !u.enabled } : u));
+    await putFiles({ ...fsData.config, users }, err);
+    return;
+  }
+  const d = ev.target.closest("[data-user-del]");
+  if (d && confirm(I18N.t("Удалить пользователя {name}? Его права на папки тоже будут убраны.", { name: d.dataset.userDel }))) {
+    const c = fsData.config;
+    await putFiles({ ...c, users: c.users.filter((u) => u.name !== d.dataset.userDel), shares: withoutRefs(c, d.dataset.userDel) }, err);
+  }
+});
+
+$("#group-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const f = ev.target;
+  const g = { name: f.group.value.trim(), description: opt(f.description.value) };
+  if (await putFiles({ ...fsData.config, groups: [...fsData.config.groups, g] }, f.querySelector(".group-error"))) f.reset();
+});
+
+$("#fs-group-list").addEventListener("click", async (ev) => {
+  const d = ev.target.closest("[data-group-del]");
+  if (!d || !confirm(I18N.t("Удалить группу {name}?", { name: d.dataset.groupDel }))) return;
+  const c = fsData.config, name = d.dataset.groupDel;
+  await putFiles({ ...c, groups: c.groups.filter((g) => g.name !== name),
+    users: c.users.map((u) => ({ ...u, groups: u.groups.filter((x) => x !== name) })), shares: withoutRefs(c, "@" + name) },
+  $("#group-form").querySelector(".group-error"));
+});
+
+// --- диски ---
+$("#fs-dev-list").addEventListener("click", async (ev) => {
+  const err = $("#fs-disks .fs-disk-error");
+  err.textContent = "";
+  const m = ev.target.closest("[data-mount]");
+  if (m) {
+    const f = $("#mount-form");
+    f.uuid.value = m.dataset.mount;
+    f.volume_name.value = (m.dataset.label || "disk").toLowerCase().replace(/[^a-z0-9_-]/g, "") || "disk";
+    $("#mount-what").textContent = m.dataset.dev;
+    f.hidden = false;
+    f.scrollIntoView({ behavior: "smooth" });
+    return;
+  }
+  const u = ev.target.closest("[data-unmount]");
+  if (u) {
+    if (!confirm(I18N.t("Отключить диск {name}?", { name: u.dataset.unmount }))) return;
+    try { fsData = await api("DELETE", `/api/files/disks/${encodeURIComponent(u.dataset.unmount)}`); renderFiles(); }
+    catch (e) { err.textContent = e.message; }
+    return;
+  }
+  const fm = ev.target.closest("[data-format]");
+  if (fm) {
+    const dev = fm.dataset.format;
+    const answer = prompt(I18N.t("ВСЕ ДАННЫЕ на {dev} будут стёрты, будет создан раздел ext4. Для подтверждения введите имя устройства:", { dev }));
+    if (answer === null) return;
+    try { fsData = await api("POST", "/api/files/disks/format", { device: dev, label: "data", confirm: answer.trim() }); renderFiles(); }
+    catch (e) { err.textContent = e.message; }
+  }
+});
+
+$("#mount-cancel").addEventListener("click", () => { $("#mount-form").hidden = true; });
+$("#mount-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const f = ev.target, err = f.querySelector(".mount-error");
+  err.textContent = "";
+  try {
+    fsData = await api("POST", "/api/files/disks/mount", { uuid: f.uuid.value, name: f.volume_name.value.trim(),
+      automount: f.automount.checked, read_only: f.read_only.checked });
+    f.hidden = true;
+    renderFiles();
+  } catch (e) { err.textContent = e.message; }
+});
+
 // ---------------------------------------------------------------- VPN: вкладки
 let vpnKind = "wireguard";
 let wgFormLoaded = false;
@@ -1474,6 +1738,7 @@ const pages = {
   "lan": loadLan,
   "dhcp": loadDhcp,
   "dns": loadDns,
+  "files": loadFiles,
   "vpn": loadVpn,
   "firewall": loadFirewall,
   "routing": loadRouting,
@@ -1528,6 +1793,7 @@ function startApp() {
   selectVpnTab("wireguard");
   selectFwTab("input");
   selectRtTab("overview");
+  selectFsTab("overview");
   selectTool("ping");
   selectSysTab("overview");
   loadSystem().catch(console.error);

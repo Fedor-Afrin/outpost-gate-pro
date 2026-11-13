@@ -14,13 +14,19 @@ services:
     cap_add:
       - NET_ADMIN
       - NET_RAW
-    device_cgroup_rules:
-      - "c 108:0 rwm"    # /dev/ppp для L2TP (на хосте: sudo modprobe ppp_generic)
+    # privileged: файловый сервер видит и монтирует диски сервера (вкладка Files → Диски).
+    # Без дисков можно убрать privileged и вернуть строку device_cgroup_rules для /dev/ppp.
+    privileged: true
+    # device_cgroup_rules:
+    #   - "c 108:0 rwm"    # /dev/ppp для L2TP (на хосте: sudo modprobe ppp_generic)
     environment:
       ROUTER_MODE: host
       API_HOST: 0.0.0.0         # слушать все адреса; доступ с WAN закрывает фаервол (галочка в LAN)
       API_PORT: "8000"
       CLI_SSH_PORT: "2222"      # SSH -> CLI роутера; порт 22 оставлен SSH самого сервера
+      ROUTER_DISKS: "1"         # управление дисками во вкладке Files
     volumes:
       - /etc/outpost-gate-pro:/etc/outpost-gate-pro
       - /var/lib/outpost-gate-pro:/var/lib/outpost-gate-pro
+      - /dev:/dev                # диски, подключённые после запуска (USB)
+      - /run/udev:/run/udev:ro   # метки и UUID разделов
