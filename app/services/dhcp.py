@@ -26,6 +26,10 @@ from app.models.lan import HOSTNAME_RE, LanConfig, Lease, StaticLease
 from app.services import oui
 
 KEA = "kea-dhcp4"
+# Kea 2.6.3+ разрешает файлы аренд только в /var/lib/kea, сокеты и pid — только в /run/kea.
+# /var/lib/kea становится ссылкой на data/kea: аренды переживают пересоздание контейнера.
+KEA_LIB = Path(os.getenv("KEA_LIB_DIR", "/var/lib/kea"))
+KEA_RUN = Path(os.getenv("KEA_RUN_DIR", "/run/kea"))
 _kea = ManagedProcess("kea-dhcp4")
 _lock = threading.RLock()
 
@@ -45,7 +49,28 @@ def _data(name: str) -> Path:
 
 
 def leases_file() -> Path:
-    return _data("kea-leases4.csv")
+    """Файл аренд на постоянном диске (data/kea/); Kea видит его как /var/lib/kea/…"""
+    return _data("kea") / "kea-leases4.csv"
+
+
+def _prepare_dirs() -> None:
+    real = _data("kea")
+    real.mkdir(parents=True, exist_ok=True)
+    old = _data("kea-leases4.csv")            # первая версия этапа 2 держала аренды прямо в data/
+    if old.exists() and not leases_file().exists():
+        old.rename(leases_file())
+    if not (KEA_LIB.is_symlink() and Path(os.readlink(KEA_LIB)) == real):
+        if KEA_LIB.is_symlink() or KEA_LIB.is_file():
+            KEA_LIB.unlink()
+        elif KEA_LIB.is_dir():
+            for item in KEA_LIB.iterdir():    # то, что положил пакет kea, — в постоянную папку
+                target = real / item.name
+                if not target.exists():
+                    shutil.move(str(item), target)
+            shutil.rmtree(KEA_LIB, ignore_errors=True)
+        KEA_LIB.parent.mkdir(parents=True, exist_ok=True)
+        KEA_LIB.symlink_to(real)
+    KEA_RUN.mkdir(parents=True, exist_ok=True)
 
 
 def subnet_id(seg: LanConfig) -> int:
@@ -114,7 +139,7 @@ def reservations(seg: LanConfig, static: list[StaticLease]) -> list[dict]:
 
 
 def kea_conf(segments: list[tuple[LanConfig, list[StaticLease]]], upstream_dns: list[str],
-             leases: str, socket_path: str) -> dict:
+             leases: str) -> dict:
     """segments — включённые сегменты с DHCP и их закреплённые адреса."""
     subnets = []
     for seg, static in segments:
@@ -131,7 +156,6 @@ def kea_conf(segments: list[tuple[LanConfig, list[StaticLease]]], upstream_dns: 
     return {"Dhcp4": {
         "interfaces-config": {"interfaces": [seg.bridge for seg, _ in segments], "dhcp-socket-type": "raw"},
         "lease-database": {"type": "memfile", "persist": True, "name": leases, "lfc-interval": 3600},
-        "control-socket": {"socket-type": "unix", "socket-name": socket_path},
         "authoritative": True,
         "calculate-tee-times": True,
         "valid-lifetime": 43200,
@@ -156,9 +180,8 @@ def running() -> bool:
 
 
 def _env() -> dict:
-    run = _data("kea")
-    run.mkdir(parents=True, exist_ok=True)
-    return {**os.environ, "KEA_LOCKFILE_DIR": str(run), "KEA_PIDFILE_DIR": str(run)}
+    KEA_RUN.mkdir(parents=True, exist_ok=True)
+    return {**os.environ, "KEA_LOCKFILE_DIR": str(KEA_RUN), "KEA_PIDFILE_DIR": str(KEA_RUN)}
 
 
 def check(conf_path: Path) -> None:
@@ -179,8 +202,9 @@ def apply(segments: list[tuple[LanConfig, list[StaticLease]]], upstream_dns: lis
             return
         if not installed():
             raise DhcpError(500, "нет Kea DHCP в образе — пересоберите образ (docker compose build)")
+        _prepare_dirs()
         migrate_dnsmasq_leases(segments)
-        conf = kea_conf(segments, upstream_dns, str(leases_file()), str(_data("kea/kea4-ctrl.sock")))
+        conf = kea_conf(segments, upstream_dns, str(KEA_LIB / leases_file().name))
         path = _data("kea-dhcp4.conf")
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".kea.", suffix=".conf")
@@ -209,6 +233,7 @@ def migrate_dnsmasq_leases(segments) -> None:
     old, new = _data("dnsmasq.leases"), leases_file()
     if new.exists() or not old.exists():
         return
+    new.parent.mkdir(parents=True, exist_ok=True)
     rows = []
     for line in old.read_text().splitlines():
         p = line.split()

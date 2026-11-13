@@ -136,7 +136,8 @@ KEA_HEADER = "address,hwaddr,client_id,valid_lifetime,expire,subnet_id,fqdn_fwd,
 
 def test_leases_and_vendor(env, tmp_path, monkeypatch):
     far = 4102444800   # 2100 год
-    (tmp_path / "data" / "kea-leases4.csv").write_text(
+    (tmp_path / "data" / "kea").mkdir(exist_ok=True)
+    (tmp_path / "data" / "kea" / "kea-leases4.csv").write_text(
         KEA_HEADER
         + f"192.168.88.20,00:0b:82:aa:bb:cc,,43200,{far},1,0,0,GXP1625.office.lan.,0,\n"
         + f"192.168.88.11,da:a1:19:00:11:22,,43200,{far},1,0,0,,0,\n"
@@ -183,7 +184,8 @@ def test_leases_mark_static(env, tmp_path):
     from app.models.lan import StaticLease
     lan.update(LanConfig(enabled=True))
     lan.add_static(StaticLease(mac="00:0b:82:aa:bb:cc", ip="192.168.88.5", name="Телефон"))
-    (tmp_path / "data" / "kea-leases4.csv").write_text(
+    (tmp_path / "data" / "kea").mkdir(exist_ok=True)
+    (tmp_path / "data" / "kea" / "kea-leases4.csv").write_text(
         KEA_HEADER + "192.168.88.5,00:0b:82:aa:bb:cc,,4294967295,0,1,0,0,gxp,0,\n")
     row = lan.leases()[0]
     assert row.static and row.name == "Телефон" and row.expires is None
