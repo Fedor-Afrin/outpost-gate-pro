@@ -146,6 +146,17 @@ CLI: `/system scheduler print | add | set | enable | disable | remove | run`, `/
 System → Резервные копии → «Экспорт командами» или `/export` в CLI: вся конфигурация командами, как `/export`
 в RouterOS. Секреты скрыты; `/export show-sensitive` — с ними; `/export format=yaml` — router.yaml.
 
+## Установка на виртуальную машину или сервер
+Скопируйте папку проекта на ВМ (Ubuntu 22.04/24.04 или Debian 12/13, минимум два сетевых адаптера) и:
+```bash
+cd outpost-gate-pro
+sudo ./install.sh              # мастер: WAN, WAN2, LAN, пароль admin
+sudo ./install.sh --status
+sudo ./install.sh --update     # после update_pro_*.sh
+sudo ./install.sh --uninstall  # (--purge — вместе с настройками)
+```
+Без вопросов: `sudo ./install.sh -y --wan ens18 --wan-mode none --lan ens19 --password '...'` (`--help`).
+
 ## Дорожная карта
 - [x] Каркас
 - [x] Advanced: IP Addresses, IP Routes (двигатель)
