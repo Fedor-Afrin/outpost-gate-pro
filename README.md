@@ -102,6 +102,17 @@ bgp instance/network/peer/session, route), `/export`.
 `?` — помощь в меню, `команда ?` — параметры команды, Tab — подсказки (и значения: интерфейсы, chain=, action=).
 Одна команда без входа: `ssh admin@router "/ip route print"`.
 
+## Мониторинг (вкладка Monitoring)
+Сбор метрик раз в 10 секунд, история хранится в data/monitor (1 час / 24 часа / 7 дней / 30 дней).
+- Обзор: WAN, CPU, память, диск, задержка до шлюза, клиенты DHCP, время работы, VPN, BGP, Samba;
+  графики трафика WAN, задержки и потерь (шлюз провайдера + свои адреса), CPU и памяти, сегментов LAN и VPN.
+- Интерфейсы: скорость, счётчики, ошибки и потери каждого порта, моста, VLAN и туннеля, график по клику.
+- Клиенты: кто сколько качает — учёт по адресам в своей таблице nftables (на фаервол не влияет).
+- Экспорт, каждый — своей галочкой: Prometheus (`/metrics`, токен), SNMP v2c/v3 (snmpd),
+  Zabbix agent (пассивные и активные проверки). Из LAN доступ открыт всегда, остальным — по списку.
+- Готовый стек Prometheus + Grafana с дашбордом и шаблон Zabbix — в deploy/monitoring (см. README там).
+- CLI: `/tool torch`, `/snmp print | set`, `/system monitoring print`, `/interface monitor-traffic`.
+
 ## Дорожная карта
 - [x] Каркас
 - [x] Advanced: IP Addresses, IP Routes (двигатель)
@@ -115,4 +126,5 @@ bgp instance/network/peer/session, route), `/export`.
 - [x] Status: WAN, VPN, LAN, система, трафик интерфейсов
 - [x] CLI в стиле MikroTik по SSH: ~70 команд, сокращения, print detail, set/move, Tab со значениями, /system shell
 - [x] Веб-интерфейс без раздела Advanced: адреса и маршруты — в CLI
-- [ ] Дальше: VLAN, смена MAC, DHCP-опция 66, мониторинг (Prometheus), HTTPS
+- [x] Pro: OSPF/BGP, LAN-сегменты + Kea + BIND 9, Samba, VLAN 802.1Q, мониторинг (дашборд, Prometheus, SNMP, Zabbix)
+- [ ] Дальше: резервный WAN, NTP / DDNS / планировщик / Wake-on-LAN, скрипт установки на ВМ и железо, HTTPS

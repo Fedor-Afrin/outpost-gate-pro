@@ -190,3 +190,63 @@ a.button { padding: 5px 10px; border: 1px solid #c8ced6; border-radius: 4px; bac
 .edit-table input[size="22"] { width: 170px; }
 /* Files */
 [dir=rtl] #mount-what { direction: ltr; text-align: right; }
+/* Monitoring: плитки, графики, таблицы */
+.mon-chart-root, #page-monitor {
+  --surface-1: #ffffff;
+  --text-primary: #222;
+  --text-secondary: #52514e;
+  --text-muted: #6b7480;
+  --grid: #eef1f4;
+  --axis: #d6dbe1;
+  --series-1: #2a78d6;   /* загрузка / первый ряд */
+  --series-2: #eb6834;   /* отдача / второй ряд */
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+}
+.seg-buttons { gap: 0; }
+.seg-buttons .legend { margin-inline-end: 8px; }
+.seg-buttons button { border-radius: 0; margin-inline-start: -1px; }
+.seg-buttons button:first-of-type { border-start-start-radius: 4px; border-end-start-radius: 4px; }
+.seg-buttons button:last-of-type { border-start-end-radius: 4px; border-end-end-radius: 4px; }
+.seg-buttons button.active { background: #2b3a4a; color: #fff; border-color: #2b3a4a; }
+.mon-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; max-width: 1240px; margin-bottom: 16px; }
+.mtile { background: #fff; border: 1px solid #e3e6ea; border-radius: 6px; padding: 10px 14px; }
+.mtile .label { font-size: 12px; color: var(--text-muted); }
+.mtile .value { font-size: 22px; font-weight: 600; margin: 2px 0; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mtile .value.small { font-size: 16px; line-height: 27px; }
+.mtile .sub { font-size: 12px; color: var(--text-muted); min-height: 15px; }
+.mtile .meter { height: 4px; background: var(--grid); border-radius: 2px; margin-top: 6px; overflow: hidden; }
+.mtile .meter i { display: block; height: 100%; background: var(--series-1); border-radius: 2px; }
+.mtile .state { display: inline-flex; align-items: center; gap: 6px; }
+.mon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(520px, 1fr)); gap: 16px; max-width: 1240px; }
+.mon-grid .card { margin: 0; max-width: none; }
+h2.mon-sub { font-size: 16px; margin: 20px 0 10px; }
+.chart-card h2 { font-size: 14px; margin-bottom: 6px; }
+.chart .plot { position: relative; height: 190px; }
+.chart.tall .plot { height: 260px; }
+.chart svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.chart .empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 13px; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; min-height: 16px; }
+.chart-legend span, .chart-tip .row { display: inline-flex; align-items: center; gap: 6px; }
+.swatch { width: 12px; height: 3px; border-radius: 2px; display: inline-block; flex-shrink: 0; }
+.chart-tip { position: absolute; pointer-events: none; background: #fff; border: 1px solid #d6dbe1; border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .08); padding: 6px 10px; font-size: 12px; color: var(--text-primary); white-space: nowrap; z-index: 5; }
+.chart-tip .time { color: var(--text-muted); margin-bottom: 3px; }
+.chart-tip .row { display: flex; gap: 6px; }
+.chart-tip .row b { margin-inline-start: auto; padding-inline-start: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.chart text { font-size: 11px; fill: var(--text-muted); font-variant-numeric: tabular-nums; }
+table.clickable tbody tr { cursor: pointer; }
+table.clickable tbody tr:hover td { background: #f6f8fa; }
+table.clickable tbody tr.selected td { background: #e8f0fb; }
+td.num, th.num { text-align: end; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.badge.vpn { background: #e6e3fb; color: #4a3aa7; }
+.badge.vlan, .badge.port { background: #eef1f4; color: #3d5166; }
+.exp-state { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; margin: 0 0 6px; }
+.form h2.mt, .toolbar.mt { margin-top: 22px; }
+.form code { background: #eef1f4; padding: 1px 5px; border-radius: 3px; }
+#mon-snmp-v2, #mon-snmp-v3 { margin: 0; }
+[dir=rtl] td.num, [dir=rtl] th.num { text-align: left; }
+[dir=rtl] .chart svg { direction: ltr; }
+[dir=rtl] .mtile .value, [dir=rtl] .mtile .sub, [dir=rtl] .chart-tip b, [dir=rtl] .chart-legend span { unicode-bidi: plaintext; }

@@ -147,6 +147,7 @@ def validate_config(data) -> None:
     """Проверить весь router.yaml теми же моделями, что и API. Ошибка -> SysError 422."""
     from app.models.l2tp import L2tpConfig
     from app.models.lan import LanConfig, StaticLease
+    from app.models.monitoring import MonitoringConfig
     from app.models.dns import DnsConfig
     from app.models.files import FilesConfig
     from app.models.routing import RoutingConfig
@@ -175,6 +176,7 @@ def validate_config(data) -> None:
         if data.get("dns") is not None:
             DnsConfig.model_validate(data["dns"])
         FilesConfig.model_validate(data.get("files") or {})
+        MonitoringConfig.model_validate(data.get("monitoring") or {})
         for section in ("addresses", "routes"):
             items = (data.get("ip") or {}).get(section) or []
             if not isinstance(items, list):

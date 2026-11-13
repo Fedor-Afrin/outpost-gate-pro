@@ -1,0 +1,41 @@
+# Prometheus + Grafana для OutpostGate Pro — отдельный стек, на любом компьютере в сети.
+#   1. Роутер: Monitoring → Экспорт → Prometheus: включить, задать токен,
+#      в «Откуда ещё» добавить адрес этого компьютера (или сеть Docker, см. README.md)
+#   2. Здесь: в prometheus.yml указать адрес роутера и тот же токен
+#   3. docker compose up -d
+#   Prometheus: http://localhost:9090   Grafana: http://localhost:3000 (admin / admin)
+name: outpost-monitoring
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=90d
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # роутер в dev-режиме на этом же компьютере
+
+  grafana:
+    image: grafana/grafana-oss:latest
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+volumes:
+  prometheus-data:
+  grafana-data:

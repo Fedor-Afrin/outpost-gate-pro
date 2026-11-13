@@ -1,0 +1,272 @@
+# Шаблон Zabbix 6.0+ (импортируется и в 7.x): Data collection → Templates → Import
+zabbix_export:
+  version: '6.0'
+  date: '2026-11-13T00:00:00Z'
+  groups:
+  - uuid: 62ce7ebf7b594a3f9422713883a1f3fb
+    name: Templates/Network devices
+  templates:
+  - uuid: bf5cc8c92c594229a9dcdbaba7bc1ae2
+    template: OutpostGate Pro by Zabbix agent
+    name: OutpostGate Pro by Zabbix agent
+    description: OutpostGate Pro router via the built-in Zabbix agent (Monitoring → Export → Zabbix agent). Keys outpost.get[...] and outpost.discovery[...]. For the standard OS metrics you can also link
+      'Linux by Zabbix agent'.
+    groups:
+    - name: Templates/Network devices
+    items:
+    - uuid: 52adbdef9f284e1e9e0d08bdffa851b7
+      name: Monitoring data age
+      key: outpost.get[age]
+      delay: 1m
+      value_type: UNSIGNED
+      units: s
+      tags:
+      - tag: component
+        value: monitoring
+      triggers:
+      - uuid: 95ccceaa9e4e428e8b8321944ff080d9
+        expression: last(/OutpostGate Pro by Zabbix agent/outpost.get[age])>120
+        name: 'OutpostGate: monitoring data is stale'
+        priority: WARNING
+        description: The router's metrics collector has not updated data for more than 2 minutes.
+    - uuid: 1e5d59e273074af89c59c95fa54cc8ea
+      name: CPU utilization
+      key: outpost.get[cpu]
+      delay: 30s
+      value_type: FLOAT
+      units: '%'
+      tags:
+      - tag: component
+        value: cpu
+      triggers:
+      - uuid: 47fe7f341e754c46a3b949ddd009416c
+        expression: min(/OutpostGate Pro by Zabbix agent/outpost.get[cpu],5m)>90
+        name: 'OutpostGate: high CPU utilization (over 90% for 5m)'
+        priority: WARNING
+    - uuid: 178bcbaf5f7d4f01859930cb9cf2465e
+      name: Memory utilization
+      key: outpost.get[mem]
+      delay: 30s
+      value_type: FLOAT
+      units: '%'
+      tags:
+      - tag: component
+        value: memory
+      triggers:
+      - uuid: 5f0113c7ec6c405d91a831c2e5882077
+        expression: min(/OutpostGate Pro by Zabbix agent/outpost.get[mem],5m)>95
+        name: 'OutpostGate: high memory utilization (over 95% for 5m)'
+        priority: AVERAGE
+    - uuid: dc9300b1b6224ae79c09bb98b52c61d6
+      name: Load average (1m)
+      key: outpost.get[load1]
+      delay: 30s
+      value_type: FLOAT
+      tags:
+      - tag: component
+        value: cpu
+    - uuid: c47013f9bdfb42669739c157559ea206
+      name: Temperature
+      key: outpost.get[temp]
+      delay: 1m
+      value_type: FLOAT
+      units: °C
+      tags:
+      - tag: component
+        value: hardware
+      triggers:
+      - uuid: 91c6303b696143c7a8564146f40b214c
+        expression: min(/OutpostGate Pro by Zabbix agent/outpost.get[temp],5m)>85
+        name: 'OutpostGate: temperature is high (over 85°C)'
+        priority: HIGH
+    - uuid: c34c3187437447d59835524ac5976d7b
+      name: Uptime
+      key: outpost.get[uptime]
+      delay: 1m
+      value_type: UNSIGNED
+      units: uptime
+      tags:
+      - tag: component
+        value: system
+      triggers:
+      - uuid: 6f656e4d05f64c46ac84b652eab5484c
+        expression: last(/OutpostGate Pro by Zabbix agent/outpost.get[uptime])<600
+        name: 'OutpostGate: router has been restarted'
+        priority: INFO
+    - uuid: d4bceb6607424f46897cb298b9240edd
+      name: WAN link up
+      key: outpost.get[wan.up]
+      delay: 30s
+      value_type: UNSIGNED
+      tags:
+      - tag: component
+        value: wan
+      triggers:
+      - uuid: 99d020e61ba74e0c9774073587902e68
+        expression: last(/OutpostGate Pro by Zabbix agent/outpost.get[wan.up])=0
+        name: 'OutpostGate: WAN link is down'
+        priority: HIGH
+    - uuid: 4b3c7cb7d1494c51a135f1fa7dc6311d
+      name: DHCP active leases
+      key: outpost.get[dhcp.leases]
+      delay: 1m
+      value_type: UNSIGNED
+      tags:
+      - tag: component
+        value: dhcp
+    - uuid: fb47885368c74e8e9fefdcc240c5b1cb
+      name: VPN tunnel up (-1 = no VPN)
+      key: outpost.get[vpn.up]
+      delay: 1m
+      value_type: FLOAT
+      tags:
+      - tag: component
+        value: vpn
+      triggers:
+      - uuid: 3a15befa945b45e2adf09fadf4bfcfc3
+        expression: last(/OutpostGate Pro by Zabbix agent/outpost.get[vpn.up])=0
+        name: 'OutpostGate: VPN tunnel is down'
+        priority: AVERAGE
+    - uuid: 4a75ea06bfa0486785614121884e3010
+      name: OSPF neighbors in Full state
+      key: outpost.get[ospf.neighbors]
+      delay: 1m
+      value_type: UNSIGNED
+      tags:
+      - tag: component
+        value: routing
+    - uuid: 676eaf7af5a343d49768dc38474a35f6
+      name: BGP peers configured
+      key: outpost.get[bgp.peers]
+      delay: 1m
+      value_type: UNSIGNED
+      tags:
+      - tag: component
+        value: routing
+    - uuid: e471c9d7c6bb495da21a33aaf49a9adf
+      name: BGP sessions established
+      key: outpost.get[bgp.up]
+      delay: 1m
+      value_type: UNSIGNED
+      tags:
+      - tag: component
+        value: routing
+      triggers:
+      - uuid: d6ca644d72834218aa407cca958d00e1
+        expression: last(/OutpostGate Pro by Zabbix agent/outpost.get[bgp.up])<last(/OutpostGate Pro by Zabbix agent/outpost.get[bgp.peers])
+        name: 'OutpostGate: BGP session is not established'
+        priority: AVERAGE
+    - uuid: b4cd2f7d59d043ccb6e8e187b646950e
+      name: Samba sessions
+      key: outpost.get[smb.sessions]
+      delay: 1m
+      value_type: UNSIGNED
+      tags:
+      - tag: component
+        value: files
+    discovery_rules:
+    - uuid: d1ba623feb0441c7bb6af3fac7236cce
+      name: Router interfaces
+      key: outpost.discovery[if]
+      delay: 10m
+      description: WAN, LAN segment bridges, ports, VLANs and VPN tunnels of the router.
+      item_prototypes:
+      - uuid: 1f94c3b1873c434b9790edf5e5e8c530
+        name: '{#LABEL} ({#IFNAME}): bits received'
+        key: outpost.get["if.rx:{#IFNAME}"]
+        delay: 30s
+        value_type: FLOAT
+        units: bps
+        preprocessing:
+        - type: MULTIPLIER
+          parameters:
+          - '8'
+        tags:
+        - tag: component
+          value: interface
+      - uuid: a8ff1170a5b5466289a6721a909a32f4
+        name: '{#LABEL} ({#IFNAME}): bits sent'
+        key: outpost.get["if.tx:{#IFNAME}"]
+        delay: 30s
+        value_type: FLOAT
+        units: bps
+        preprocessing:
+        - type: MULTIPLIER
+          parameters:
+          - '8'
+        tags:
+        - tag: component
+          value: interface
+      - uuid: abfa22d179da41b08ac011016215415a
+        name: '{#LABEL} ({#IFNAME}): link up'
+        key: outpost.get["if.up:{#IFNAME}"]
+        delay: 1m
+        value_type: UNSIGNED
+        tags:
+        - tag: component
+          value: interface
+      - uuid: ae057c462d644a5794375fc3d3ae196f
+        name: '{#LABEL} ({#IFNAME}): errors per second'
+        key: outpost.get["if.errors:{#IFNAME}"]
+        delay: 1m
+        value_type: FLOAT
+        preprocessing:
+        - type: CHANGE_PER_SECOND
+          parameters:
+          - ''
+        tags:
+        - tag: component
+          value: interface
+    - uuid: d9733dd806514e25a9d1e448224efd9c
+      name: Connectivity checks
+      key: outpost.discovery[ping]
+      delay: 10m
+      description: Ping to the ISP gateway and to the addresses from Monitoring → Export settings.
+      item_prototypes:
+      - uuid: 6fd0e7e95f10480984ac797427047776
+        name: 'Ping {#NAME}: latency'
+        key: outpost.get["ping.rtt:{#TARGET}"]
+        delay: 30s
+        value_type: FLOAT
+        units: ms
+        tags:
+        - tag: component
+          value: connectivity
+        trigger_prototypes:
+        - uuid: f4e9ba72ee4846599f5dd574736d1633
+          expression: avg(/OutpostGate Pro by Zabbix agent/outpost.get["ping.rtt:{#TARGET}"],5m)>200
+          name: 'OutpostGate: high latency to {#NAME} (over 200 ms)'
+          priority: WARNING
+      - uuid: 91eea84af3c348c89e9bd04c64664f75
+        name: 'Ping {#NAME}: packet loss'
+        key: outpost.get["ping.loss:{#TARGET}"]
+        delay: 30s
+        value_type: FLOAT
+        units: '%'
+        tags:
+        - tag: component
+          value: connectivity
+        trigger_prototypes:
+        - uuid: d053e0f06d054e658383ea118b643f1e
+          expression: min(/OutpostGate Pro by Zabbix agent/outpost.get["ping.loss:{#TARGET}"],5m)>50
+          name: 'OutpostGate: packet loss to {#NAME} over 50%'
+          priority: AVERAGE
+    - uuid: 49324232193a437bab17a784d7ed357b
+      name: Router volumes
+      key: outpost.discovery[disk]
+      delay: 1h
+      item_prototypes:
+      - uuid: f570f8d746fd4d558cf58ae6c3d1b041
+        name: 'Volume {#DISK} ({#PATH}): space used'
+        key: outpost.get["disk.pused:{#DISK}"]
+        delay: 5m
+        value_type: FLOAT
+        units: '%'
+        tags:
+        - tag: component
+          value: storage
+        trigger_prototypes:
+        - uuid: d8b604d762e04ea2bb786114199360a0
+          expression: last(/OutpostGate Pro by Zabbix agent/outpost.get["disk.pused:{#DISK}"])>90
+          name: 'OutpostGate: volume {#DISK} is over 90% full'
+          priority: WARNING

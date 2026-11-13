@@ -1741,9 +1741,403 @@ $("#snapshots").addEventListener("click", async (ev) => {
   } catch (e) { $("#restore-error").textContent = e.message; }
 });
 
+// ---------------------------------------------------------------- Monitoring
+let monTab = "overview";
+let monRange = "1h";
+let monSnap = null;
+let monHist = null;              // { ключ: { start, step, values } }
+let monHistAt = 0;
+let monHistKey = "";
+let monIf = null;                // интерфейс, выбранный во вкладке «Интерфейсы»
+let monSettings = null;
+let monFormLoaded = false;
+const MON_HIST_EVERY = { "1h": 10e3, "24h": 60e3, "7d": 300e3, "30d": 600e3 };
+const MON_COLORS = ["--series-1", "--series-2", "--series-3", "--series-4", "--series-5", "--series-6"];
+const monColor = (i) => `var(${MON_COLORS[i % MON_COLORS.length]})`;
+
+const bits = (b) => {
+  if (b == null) return "—";
+  const u = ["bps", "kbps", "Mbps", "Gbps"]; let i = 0;
+  while (Math.abs(b) >= 1000 && i < u.length - 1) { b /= 1000; i++; }
+  return `${i === 0 || b >= 100 ? Math.round(b) : +b.toFixed(1)} ${u[i]}`;
+};
+const bps = (bytesPerSec) => (bytesPerSec == null ? "—" : bits(bytesPerSec * 8));
+const pct = (v) => (v == null ? "—" : v === 0 ? "0%" : `${v < 10 ? v.toFixed(1) : Math.round(v)}%`);
+const monMs = (v) => (v == null ? "—" : `${v === 0 ? 0 : v < 10 ? v.toFixed(1) : Math.round(v)} мс`);
+const pingName = (p) => (p.name === "gateway" ? I18N.t("шлюз {ip}", { ip: p.target }) : p.target);
+
+// --- график: линии с заливкой, сетка, подписи осей, перекрестие и подсказка при наведении
+function niceMax(v) {
+  if (!(v > 0)) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(v)));
+  const f = v / p;
+  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p;
+}
+
+function timeLabel(t, step, full) {
+  const d = new Date(t * 1000);
+  const p2 = (n) => String(n).padStart(2, "0");
+  const hm = `${p2(d.getHours())}:${p2(d.getMinutes())}`;
+  const dm = `${p2(d.getDate())}.${p2(d.getMonth() + 1)}`;
+  if (full) return step >= 600 || monRange !== "1h" ? `${dm} ${hm}` : `${hm}:${p2(d.getSeconds())}`;
+  return step >= 600 ? dm : hm;
+}
+
+function drawChart(el, opt) {
+  // opt: { series: [{ name, color, values }], start, step, fmt, max, empty }
+  el._chart = opt;
+  const series = opt.series.filter((s) => s.values);
+  const n = Math.max(0, ...series.map((s) => s.values.length));
+  const legend = series.length > 1
+    ? series.map((s) => `<span><i class="swatch" style="background:${s.color}"></i>${esc(s.name)}</span>`).join("") : "";
+  el.innerHTML = `<div class="chart-legend">${legend}</div><div class="plot"></div>`;
+  const plot = el.querySelector(".plot");
+  const vals = series.flatMap((s) => s.values).filter((v) => v != null);
+  if (!vals.length || n < 2) {
+    plot.innerHTML = `<div class="empty">${esc(opt.empty || "Нет данных за этот период")}</div>`;
+    return;
+  }
+  const W = plot.clientWidth || 520, H = plot.clientHeight || 190;
+  const m = { l: 64, r: 12, t: 8, b: 22 };
+  const top = opt.max ?? niceMax(Math.max(...vals) * 1.05 / 4) * 4;   // четыре ровных шага сетки
+  const X = (i) => m.l + (W - m.l - m.r) * i / (n - 1);
+  const Y = (v) => m.t + (H - m.t - m.b) * (1 - Math.min(v, top) / top);
+  let svg = "";
+  for (let k = 0; k <= 4; k++) {                  // сетка и подписи оси Y
+    const v = top * k / 4, y = Y(v).toFixed(1);
+    svg += `<line x1="${m.l}" x2="${W - m.r}" y1="${y}" y2="${y}" style="stroke:var(${k ? "--grid" : "--axis"})" stroke-width="1"/>`;
+    svg += `<text x="${m.l - 8}" y="${(+y + 4).toFixed(1)}" text-anchor="end">${esc(opt.fmt(v))}</text>`;
+  }
+  const ticks = Math.min(6, Math.max(2, Math.floor((W - m.l - m.r) / 110)));
+  for (let k = 0; k <= ticks; k++) {              // подписи оси X
+    const i = Math.round((n - 1) * k / ticks);
+    const anchor = k === 0 ? "start" : k === ticks ? "end" : "middle";
+    svg += `<text x="${X(i).toFixed(1)}" y="${H - 6}" text-anchor="${anchor}">${timeLabel(opt.start + i * opt.step, opt.step)}</text>`;
+  }
+  series.forEach((s) => {                         // заливка и линия, разрывы там, где данных нет
+    let line = "", area = "", seg = [];
+    const flush = () => {
+      if (!seg.length) return;
+      line += seg.map(([x, y], j) => `${j ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`).join("");
+      area += `M${seg[0][0].toFixed(1)} ${Y(0).toFixed(1)}` + seg.map(([x, y]) => `L${x.toFixed(1)} ${y.toFixed(1)}`).join("")
+        + `L${seg[seg.length - 1][0].toFixed(1)} ${Y(0).toFixed(1)}Z`;
+      seg = [];
+    };
+    s.values.forEach((v, i) => (v == null ? flush() : seg.push([X(i), Y(v)])));
+    flush();
+    svg += `<path d="${area}" style="fill:${s.color}" fill-opacity="0.08"/>`;
+    svg += `<path d="${line}" fill="none" style="stroke:${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  });
+  svg += `<line class="xh" y1="${m.t}" y2="${H - m.b}" style="stroke:var(--text-muted)" stroke-width="1" stroke-dasharray="3 3" visibility="hidden"/>`;
+  svg += series.map((s, k) => `<circle class="pt" data-k="${k}" r="4" style="fill:${s.color};stroke:var(--surface-1)" stroke-width="2" visibility="hidden"/>`).join("");
+  svg += `<rect x="${m.l}" y="0" width="${W - m.l - m.r}" height="${H}" fill="transparent" class="hit"/>`;
+  plot.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img">${svg}</svg><div class="chart-tip" hidden></div>`;
+
+  const svgEl = plot.querySelector("svg"), tip = plot.querySelector(".chart-tip"), xh = plot.querySelector(".xh");
+  const pts = [...plot.querySelectorAll(".pt")];
+  const hide = () => { tip.hidden = true; xh.setAttribute("visibility", "hidden"); pts.forEach((p) => p.setAttribute("visibility", "hidden")); };
+  plot.querySelector(".hit").addEventListener("mouseleave", hide);
+  plot.querySelector(".hit").addEventListener("mousemove", (ev) => {
+    const r = svgEl.getBoundingClientRect();
+    const px = (ev.clientX - r.left) * W / r.width;
+    const i = Math.max(0, Math.min(n - 1, Math.round((px - m.l) / (W - m.l - m.r) * (n - 1))));
+    const x = X(i);
+    xh.setAttribute("x1", x); xh.setAttribute("x2", x); xh.setAttribute("visibility", "visible");
+    let rows = "";
+    series.forEach((s, k) => {
+      const v = s.values[i];
+      if (v == null) { pts[k].setAttribute("visibility", "hidden"); }
+      else { pts[k].setAttribute("cx", x); pts[k].setAttribute("cy", Y(v)); pts[k].setAttribute("visibility", "visible"); }
+      rows += `<div class="row"><i class="swatch" style="background:${s.color}"></i>${esc(s.name)}<b>${v == null ? "—" : esc(opt.fmt(v))}</b></div>`;
+    });
+    tip.innerHTML = `<div class="time">${timeLabel(opt.start + i * opt.step, opt.step, true)}</div>${rows}`;
+    tip.hidden = false;
+    const left = x * r.width / W;
+    tip.style.top = "4px";
+    tip.style.left = `${Math.min(Math.max(0, left + 12), r.width - tip.offsetWidth)}px`;
+    if (left + 12 + tip.offsetWidth > r.width) tip.style.left = `${Math.max(0, left - 12 - tip.offsetWidth)}px`;
+  });
+}
+
+let monResizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(monResizeTimer);
+  monResizeTimer = setTimeout(() => document.querySelectorAll("#page-monitor .chart").forEach((el) => {
+    if (el._chart && el.offsetParent) drawChart(el, el._chart);
+  }), 150);
+});
+
+const hseries = (key, scale = 1) => {
+  const s = monHist?.[key];
+  return s ? s.values.map((v) => (v == null ? null : v * scale)) : null;
+};
+const hmeta = () => Object.values(monHist ?? {})[0] ?? { start: 0, step: 10 };
+
+// --- вкладки и период
+function selectMonTab(tab) {
+  monTab = tab;
+  document.querySelectorAll("#mon-tabs .tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === tab));
+  for (const t of ["overview", "interfaces", "clients", "export"]) $(`#mon-${t}`).hidden = t !== tab;
+  $("#mon-range").hidden = !(tab === "overview" || tab === "interfaces");
+  monHistKey = "";
+  if (location.hash === "#monitor") loadMonitor().catch(console.error);
+}
+$("#mon-tabs").addEventListener("click", (ev) => { const t = ev.target.closest(".tab"); if (t) selectMonTab(t.dataset.tab); });
+$("#mon-range").addEventListener("click", (ev) => {
+  const b = ev.target.closest("button[data-range]");
+  if (!b) return;
+  monRange = b.dataset.range;
+  document.querySelectorAll("#mon-range button").forEach((x) => x.classList.toggle("active", x === b));
+  monHistKey = "";
+  loadMonitor().catch(console.error);
+});
+
+async function loadMonitor() {
+  monSnap = await api("GET", "/api/monitor");
+  if (monTab === "overview") renderMonTiles();
+  if (monTab === "interfaces") renderMonIfaces();
+  if (monTab === "clients") renderMonClients();
+  if (monTab === "export") await loadMonSettings();
+  if (monTab === "overview" || monTab === "interfaces") await loadMonHistory();
+}
+
+function monChartIfaces() {
+  return (monSnap?.interfaces ?? []).filter((i) => i.role === "lan" || i.role === "vpn");
+}
+
+function monKeys() {
+  if (monTab === "interfaces") return monIf ? [`if:${monIf}:rx`, `if:${monIf}:tx`] : [];
+  const keys = ["cpu", "mem"];
+  const wan = monSnap?.wan?.interface;
+  if (wan) keys.push(`if:${wan}:rx`, `if:${wan}:tx`);
+  for (const p of monSnap?.ping ?? []) keys.push(`ping:${p.name}:rtt`, `ping:${p.name}:loss`);
+  for (const i of monChartIfaces()) keys.push(`if:${i.name}:rx`, `if:${i.name}:tx`);
+  return keys;
+}
+
+async function loadMonHistory() {
+  const keys = monKeys();
+  const sig = `${monTab}|${monRange}|${keys.join(",")}`;
+  if (sig === monHistKey && Date.now() - monHistAt < MON_HIST_EVERY[monRange]) return;
+  if (!keys.length) { monHist = {}; monHistKey = sig; renderMonCharts(); return; }
+  const r = await api("GET", `/api/monitor/history?range=${monRange}&keys=${encodeURIComponent(keys.join(","))}`);
+  monHist = r.series; monHistKey = sig; monHistAt = Date.now();
+  renderMonCharts();
+}
+
+function trafficChart(el, name, down, up, downName, upName) {
+  const { start, step } = hmeta();
+  drawChart(el, { start, step, fmt: bits, series: [
+    { name: downName, color: monColor(0), values: hseries(`if:${name}:${down}`, 8) },
+    { name: upName, color: monColor(1), values: hseries(`if:${name}:${up}`, 8) }] });
+}
+
+function renderMonCharts() {
+  const { start, step } = hmeta();
+  if (monTab === "interfaces") {
+    if (monIf) trafficChart($("#ch-if"), monIf, "rx", "tx", "↓ Приём", "↑ Передача");
+    return;
+  }
+  const wan = monSnap?.wan?.interface;
+  if (wan) trafficChart($("#ch-wan"), wan, "rx", "tx", "↓ Загрузка", "↑ Отдача");
+  else drawChart($("#ch-wan"), { series: [], start, step, fmt: bits, empty: "WAN не настроен" });
+  const pings = monSnap?.ping ?? [];
+  drawChart($("#ch-rtt"), { start, step, fmt: monMs, empty: "Нет данных — проверьте адреса во вкладке «Экспорт»",
+    series: pings.map((p, k) => ({ name: pingName(p), color: monColor(k), values: hseries(`ping:${p.name}:rtt`) })) });
+  drawChart($("#ch-loss"), { start, step, fmt: pct, max: 100,
+    series: pings.map((p, k) => ({ name: pingName(p), color: monColor(k), values: hseries(`ping:${p.name}:loss`) })) });
+  drawChart($("#ch-sys"), { start, step, fmt: pct, max: 100, series: [
+    { name: "CPU", color: monColor(0), values: hseries("cpu") },
+    { name: "Память", color: monColor(1), values: hseries("mem") }] });
+
+  const box = $("#mon-seg-charts");
+  const ifs = monChartIfaces();
+  const want = ifs.map((i) => i.name).join(",");
+  if (box.dataset.ifs !== want) {
+    box.dataset.ifs = want;
+    box.innerHTML = ifs.map((i) => `<div class="card chart-card"><h2>${esc(i.label || i.name)} · ${esc(i.name)}</h2>`
+      + `<div class="chart" data-if="${esc(i.name)}"></div></div>`).join("")
+      || `<p class="hint">Нет активных сегментов LAN и туннелей VPN.</p>`;
+  }
+  for (const i of ifs) {
+    const el = box.querySelector(`.chart[data-if="${CSS.escape(i.name)}"]`);
+    if (i.role === "vpn") trafficChart(el, i.name, "rx", "tx", "↓ Из туннеля", "↑ В туннель");
+    else trafficChart(el, i.name, "tx", "rx", "↓ К клиентам", "↑ От клиентов");
+  }
+}
+
+function mtile(label, value, sub, meter, small) {
+  return `<div class="mtile"><div class="label">${label}</div><div class="value${small ? " small" : ""}">${value}</div>`
+    + `<div class="sub">${sub ?? ""}</div>`
+    + (meter != null ? `<div class="meter"><i style="width:${Math.max(0, Math.min(100, meter))}%"></i></div>` : "")
+    + "</div>";
+}
+const stateDot = (ok, text) => `<span class="state"><span class="dot ${ok ? "ok" : "bad"}"></span>${text}</span>`;
+
+function renderMonTiles() {
+  const s = monSnap;
+  if (!s?.time) {
+    $("#mon-tiles").innerHTML = `<p class="hint">Сбор данных начался — первые значения появятся через 10–20 секунд.</p>`;
+    return;
+  }
+  const y = s.system, mem = y.memory ?? {}, disk = (y.disks ?? [])[0];
+  const gw = (s.ping ?? []).find((p) => p.name === "gateway");
+  const leases = (s.dhcp ?? []).reduce((a, d) => a + d.leases, 0);
+  const t = [
+    mtile("WAN", stateDot(s.wan.up, s.wan.up ? "работает" : "нет связи"), esc([s.wan.interface, s.wan.gateway].filter(Boolean).join(" → ")), null, true),
+    mtile("CPU", pct(y.cpu), y.load ? `load ${y.load.map((x) => x.toFixed(2)).join(" ")}` : "", y.cpu),
+    mtile("Память", pct(mem.percent), `${fmt(mem.used ?? 0)} / ${fmt(mem.total ?? 0)}`, mem.percent),
+    disk ? mtile("Диск", pct(disk.percent), `${fmt(disk.used)} / ${fmt(disk.total)}`, disk.percent) : "",
+    mtile("Задержка до шлюза", monMs(gw?.rtt), gw ? I18N.t("потери {p}", { p: pct(gw.loss) }) : "нет шлюза"),
+    mtile("Клиенты DHCP", String(leases), (s.dhcp ?? []).map((d) => `${esc(d.name)}: ${d.leases}`).join(" · ")),
+    mtile("Время работы", duration(y.uptime), "", null, true),
+    y.temperature != null ? mtile("Температура", `${y.temperature} °C`, "") : "",
+    s.vpn ? mtile("VPN", stateDot(s.vpn.up, s.vpn.up ? "подключён" : "нет связи"), esc(s.vpn.kind), null, true) : "",
+    s.routing?.bgp?.length ? mtile("BGP", `${s.routing.bgp.filter((p) => p.up).length} / ${s.routing.bgp.length}`, "сессий установлено") : "",
+    s.smb_sessions != null ? mtile("Samba", String(s.smb_sessions), "подключений") : "",
+  ];
+  $("#mon-tiles").innerHTML = t.join("");
+}
+
+const roleBadge = (r) => (r ? `<span class="badge ${r}">${{ wan: "WAN", lan: "LAN", vpn: "VPN", vlan: "VLAN", port: "порт" }[r] ?? r}</span>` : "—");
+
+function renderMonIfaces() {
+  const ifs = monSnap?.interfaces ?? [];
+  if (!monIf || !ifs.some((i) => i.name === monIf)) {
+    monIf = (ifs.find((i) => i.role === "wan") ?? ifs[0])?.name ?? null;
+  }
+  $("#mon-if-table").innerHTML = ifs.map((i) => `<tr data-if="${esc(i.name)}" class="${i.name === monIf ? "selected" : ""}">
+    <td><b>${esc(i.name)}</b></td><td>${roleBadge(i.role)}</td><td>${dash(i.label)}</td>
+    <td>${i.up ? '<span class="dot ok"></span>' : '<span class="dot bad"></span>'}</td>
+    <td class="num">${i.speed ? bits(i.speed) : "—"}</td>
+    <td class="num">${bps(i.rx_rate)}</td><td class="num">${bps(i.tx_rate)}</td>
+    <td class="num">${fmt(i.rx_bytes)}</td><td class="num">${fmt(i.tx_bytes)}</td>
+    <td class="num">${i.rx_errors + i.tx_errors}</td><td class="num">${i.rx_dropped + i.tx_dropped}</td></tr>`).join("")
+    || `<tr><td colspan="11">—</td></tr>`;
+  const cur = ifs.find((i) => i.name === monIf);
+  $("#mon-if-title").textContent = cur ? `${cur.name}${cur.label ? " · " + cur.label : ""}` : "—";
+}
+$("#mon-if-table").addEventListener("click", (ev) => {
+  const tr = ev.target.closest("tr[data-if]");
+  if (!tr) return;
+  monIf = tr.dataset.if;
+  renderMonIfaces();
+  loadMonHistory().catch(console.error);
+});
+
+function renderMonClients() {
+  const s = monSnap ?? {};
+  $("#mon-cl-error").textContent = s.time && !s.accounting
+    ? I18N.t("Учёт трафика клиентов недоступен: {e}", { e: s.accounting_error || "нет активных сегментов LAN" }) : "";
+  const sel = $("#mon-cl-seg");
+  const segs = [...new Set((s.clients ?? []).map((c) => c.segment).filter(Boolean))].sort();
+  const want = segs.join("|");
+  if (sel.dataset.segs !== want) {
+    const cur = sel.value;
+    sel.dataset.segs = want;
+    sel.innerHTML = `<option value="">все</option>` + segs.map((x) => `<option>${esc(x)}</option>`).join("");
+    sel.value = segs.includes(cur) ? cur : "";
+  }
+  const q = $("#mon-cl-filter").value.trim().toLowerCase();
+  const rows = (s.clients ?? [])
+    .filter((c) => !sel.value || c.segment === sel.value)
+    .filter((c) => !q || [c.name, c.ip, c.mac].some((x) => (x ?? "").toLowerCase().includes(q)))
+    .sort((a, b) => ((b.rx_rate ?? 0) + (b.tx_rate ?? 0)) - ((a.rx_rate ?? 0) + (a.tx_rate ?? 0))
+      || (b.rx_bytes + b.tx_bytes) - (a.rx_bytes + a.tx_bytes));
+  $("#mon-cl-count").textContent = I18N.t("устройств: {n}", { n: rows.length });
+  $("#mon-cl-table").innerHTML = rows.map((c) => `<tr><td>${dash(c.name)}</td><td>${esc(c.ip)}</td><td>${dash(c.mac)}</td>
+    <td>${dash(c.segment)}</td><td class="num">${bps(c.rx_rate)}</td><td class="num">${bps(c.tx_rate)}</td>
+    <td class="num">${fmt(c.rx_bytes)}</td><td class="num">${fmt(c.tx_bytes)}</td></tr>`).join("")
+    || `<tr><td colspan="8">${s.time ? "Пока нет трафика через роутер" : "Сбор данных начался…"}</td></tr>`;
+}
+$("#mon-cl-seg").addEventListener("change", renderMonClients);
+$("#mon-cl-filter").addEventListener("input", renderMonClients);
+
+// --- экспорт: Prometheus, SNMP, Zabbix agent
+const listOf = (v) => v.split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean);
+
+function expState(el, st) {
+  if (!st.enabled) { el.innerHTML = ""; return; }
+  if (!st.installed) { el.innerHTML = `<span class="dot bad"></span><span class="error">не установлен в образе — пересоберите образ</span>`; return; }
+  el.innerHTML = st.running
+    ? `<span class="dot ok"></span>${esc(I18N.t("работает"))}${st.flavor ? ` <span class="legend">(${esc(st.flavor)})</span>` : ""}`
+    : `<span class="dot bad"></span><span class="error">${esc(st.error || "не запущен")}</span>`;
+}
+
+function snmpVersionChanged() {
+  const v3 = $("#mon-form").snmp_version.value === "v3";
+  $("#mon-snmp-v2").hidden = v3;
+  $("#mon-snmp-v3").hidden = !v3;
+}
+$("#mon-form").snmp_version.addEventListener("change", snmpVersionChanged);
+
+function fillMonForm() {
+  const f = $("#mon-form"), c = monSettings.config;
+  f.ping_targets.value = c.ping_targets.join(", ");
+  f.prom_enabled.checked = c.prometheus.enabled;
+  f.prom_token.value = c.prometheus.token ?? "";
+  f.prom_allowed.value = c.prometheus.allowed.join(", ");
+  const s = c.snmp;
+  f.snmp_enabled.checked = s.enabled;
+  f.snmp_version.value = s.version;
+  f.snmp_community.value = s.community;
+  f.snmp_user.value = s.user ?? "";
+  f.snmp_auth.value = ""; f.snmp_priv.value = "";
+  f.snmp_location.value = s.location ?? "";
+  f.snmp_contact.value = s.contact ?? "";
+  f.snmp_allowed.value = s.allowed.join(", ");
+  const z = c.zabbix;
+  f.zbx_enabled.checked = z.enabled;
+  f.zbx_server.value = z.server.join(", ");
+  f.zbx_active.value = z.server_active ?? "";
+  f.zbx_hostname.value = z.hostname ?? "";
+  f.zbx_metadata.value = z.metadata ?? "";
+  snmpVersionChanged();
+}
+
+async function loadMonSettings() {
+  monSettings = await api("GET", "/api/monitor/settings");
+  if (!monFormLoaded) { fillMonForm(); monFormLoaded = true; }
+  expState($("#mon-snmp-state"), monSettings.snmp);
+  expState($("#mon-zbx-state"), monSettings.zabbix);
+  $("#mon-prom-url").textContent = `${location.protocol}//${location.host}/metrics`;
+  $("#mon-lan-access").textContent = I18N.t("Из сегментов LAN доступ к экспорту открыт всегда: {nets}. Для других адресов (через WAN, VPN, из сети Docker) заполните поля «Откуда ещё» — роутер откроет порт в фаерволе только для них.",
+    { nets: monSettings.lan_networks.join(", ") || "—" });
+}
+
+$("#mon-token-gen").addEventListener("click", () => {
+  const abc = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  const r = crypto.getRandomValues(new Uint8Array(32));
+  $("#mon-form").prom_token.value = [...r].map((x) => abc[x % abc.length]).join("");
+});
+
+$("#mon-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const f = ev.target;
+  $("#mon-ok").textContent = ""; $("#mon-error").textContent = "";
+  const body = {
+    ping_targets: listOf(f.ping_targets.value),
+    prometheus: { enabled: f.prom_enabled.checked, token: f.prom_token.value.trim() || null, allowed: listOf(f.prom_allowed.value) },
+    snmp: { enabled: f.snmp_enabled.checked, version: f.snmp_version.value, community: f.snmp_community.value.trim(),
+            user: f.snmp_user.value.trim() || null, auth_password: f.snmp_auth.value || null, priv_password: f.snmp_priv.value || null,
+            location: f.snmp_location.value.trim() || null, contact: f.snmp_contact.value.trim() || null,
+            allowed: listOf(f.snmp_allowed.value) },
+    zabbix: { enabled: f.zbx_enabled.checked, server: listOf(f.zbx_server.value), server_active: f.zbx_active.value.trim() || null,
+              hostname: f.zbx_hostname.value.trim() || null, metadata: f.zbx_metadata.value.trim() || null },
+  };
+  try {
+    monSettings = await api("PUT", "/api/monitor/settings", body);
+    fillMonForm();
+    expState($("#mon-snmp-state"), monSettings.snmp);
+    expState($("#mon-zbx-state"), monSettings.zabbix);
+    $("#mon-ok").textContent = "Применено";
+  } catch (e) { $("#mon-error").textContent = e.message; }
+});
+
 // ---------------------------------------------------------------- навигация
 const pages = {
   "status": loadStatus,
+  "monitor": loadMonitor,
   "wan": loadWan,
   "lan": loadLan,
   "dhcp": loadDhcp,
@@ -1804,6 +2198,8 @@ function startApp() {
   selectFwTab("input");
   selectRtTab("overview");
   selectFsTab("overview");
+  selectMonTab("overview");
+  document.querySelector('#mon-range button[data-range="1h"]').classList.add("active");
   selectTool("ping");
   selectSysTab("overview");
   loadSystem().catch(console.error);

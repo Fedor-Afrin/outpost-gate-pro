@@ -1494,6 +1494,79 @@ def smb_disks_print(ctx, pos, named):
           legend="S - system (сервер), M - mounted")
 
 
+# --- мониторинг (/tool torch, /snmp, /system monitoring) ---------------------------------------------------------
+def _bps(v) -> str:
+    if v is None:
+        return "-"
+    bits = float(v) * 8
+    for unit in ("bps", "kbps", "Mbps", "Gbps"):
+        if bits < 1000 or unit == "Gbps":
+            return f"{bits:.0f}{unit}" if unit == "bps" else f"{bits:.1f}{unit}"
+        bits /= 1000
+    return str(bits)
+
+
+def torch(ctx, pos, named):
+    """Кто сейчас качает: клиенты LAN по скорости (учёт в nftables)."""
+    d = ctx.api.get("/api/monitor")
+    if not d.get("accounting"):
+        ctx.out("учёт трафика клиентов недоступен" + (f": {d['accounting_error']}" if d.get("accounting_error") else ""))
+        return
+    rows = sorted(d.get("clients") or [], key=lambda c: -((c["rx_rate"] or 0) + (c["tx_rate"] or 0)))
+    seg = named.get("segment")
+    if seg:
+        rows = [c for c in rows if c["segment"].lower() == seg.lower()]
+    table(ctx, ["address", "name", "segment", "rx-rate", "tx-rate", "rx-total", "tx-total"],
+          [[c["ip"], c["name"] or "", c["segment"], _bps(c["rx_rate"]), _bps(c["tx_rate"]),
+            fmt_bytes(c["rx_bytes"]), fmt_bytes(c["tx_bytes"])] for c in rows[:int(named.get("count") or 20)]])
+
+
+def _mon(ctx) -> dict:
+    import copy
+    return copy.deepcopy(ctx.api.get("/api/monitor/settings"))
+
+
+def snmp_print(ctx, pos, named):
+    d = _mon(ctx)
+    s, st = d["config"]["snmp"], d["snmp"]
+    kv(ctx, [("enabled", s["enabled"]), ("running", st["running"]), ("version", s["version"]),
+             ("community", s["community"] if s["version"] == "v2c" else None),
+             ("user", s.get("user") if s["version"] == "v3" else None),
+             ("contact", s.get("contact") or ""), ("location", s.get("location") or ""),
+             ("allowed", ",".join(s["allowed"]) or "LAN"), ("error", st.get("error"))])
+
+
+def snmp_set(ctx, pos, named):
+    cfg = _mon(ctx)["config"]
+    s = cfg["snmp"]
+    if "enabled" in named:
+        s["enabled"] = yes(named["enabled"])
+    for k, f in (("version", "version"), ("community", "community"), ("user", "user"), ("contact", "contact"),
+                 ("location", "location"), ("auth-password", "auth_password"), ("priv-password", "priv_password")):
+        if k in named:
+            s[f] = named[k]
+    if "allowed" in named:
+        s["allowed"] = [x for x in named["allowed"].split(",") if x]
+    ctx.api.put("/api/monitor/settings", cfg)
+
+
+def monitoring_print(ctx, pos, named):
+    d = _mon(ctx)
+    c = d["config"]
+    snap = ctx.api.get("/api/monitor")
+    kv(ctx, [("collector", "running" if snap.get("time") else "starting"),
+             ("client-accounting", bool(snap.get("accounting"))),
+             ("ping-targets", ",".join(c["ping_targets"]) or "-"),
+             ("prometheus", c["prometheus"]["enabled"]),
+             ("prometheus-url", "http://<router>:8000/metrics" if c["prometheus"]["enabled"] else None),
+             ("prometheus-token", "yes" if c["prometheus"].get("token") else "no"),
+             ("snmp", c["snmp"]["enabled"]), ("snmp-running", d["snmp"]["running"]),
+             ("zabbix-agent", c["zabbix"]["enabled"]), ("zabbix-running", d["zabbix"]["running"]),
+             ("zabbix-flavor", d["zabbix"].get("flavor")),
+             ("zabbix-server", ",".join(c["zabbix"]["server"]) or None),
+             ("lan-networks", ",".join(d["lan_networks"]) or "-")])
+
+
 # --- дерево меню ------------------------------------------------------------------------------------------------------
 P = "показать"
 
@@ -1695,6 +1768,7 @@ ROOT = Menu("OutpostGate Pro", {
         "clock": Menu("время", {"print": Cmd(clock_print, P)}),
         "routerboard": Menu("устройство", {"print": Cmd(routerboard_print, P)}),
         "package": Menu("версия", {"print": pr(package_print)}),
+        "monitoring": Menu("мониторинг и экспорт (Prometheus, SNMP, Zabbix)", {"print": Cmd(monitoring_print, P)}),
         "shell": Cmd(system_shell, "командная строка Linux (bash); назад — exit или Ctrl-D"),
         "reboot": Cmd(system_reboot, "перезапустить сервис роутера"),
     }),
@@ -1714,6 +1788,13 @@ ROOT = Menu("OutpostGate Pro", {
         "ip-scan": Cmd(ip_scan, "устройства в сети: ip-scan address-range=192.168.88.0/24",
                        ("address-range", "interface"), IFACE),
         "dns-lookup": Cmd(dns_lookup, "dns-lookup name=example.com", ("name",)),
+        "torch": Cmd(torch, "кто качает: torch segment=LAN count=20", ("segment", "count")),
+    }),
+    "snmp": Menu("SNMP-агент", {
+        "print": Cmd(snmp_print, P),
+        "set": Cmd(snmp_set, "set enabled=yes community=office allowed=10.0.0.5 | version=v3 user=zbx",
+                   ("enabled", "version", "community", "user", "auth-password", "priv-password",
+                    "contact", "location", "allowed"), {"enabled": YESNO, "version": ["v2c", "v3"]}),
     }),
     "ping": Cmd(ping, "ping 8.8.8.8 count=4 interface=wg0", ("address", "count", "interface"), IFACE),
     "traceroute": Cmd(traceroute, "traceroute 8.8.8.8", ("address", "max-hops", "interface"), IFACE),
