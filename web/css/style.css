@@ -250,3 +250,5 @@ td.num, th.num { text-align: end; font-variant-numeric: tabular-nums; white-spac
 [dir=rtl] td.num, [dir=rtl] th.num { text-align: left; }
 [dir=rtl] .chart svg { direction: ltr; }
 [dir=rtl] .mtile .value, [dir=rtl] .mtile .sub, [dir=rtl] .chart-tip b, [dir=rtl] .chart-legend span { unicode-bidi: plaintext; }
+#tool-tabs, #sys-tabs, #wan-tabs { max-width: 1000px; }
+.tab { white-space: nowrap; }

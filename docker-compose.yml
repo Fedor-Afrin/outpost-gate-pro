@@ -37,6 +37,8 @@ services:
         priority: 1000   # подключается первой -> eth0
       lan:
         priority: 100    # -> eth1
+      # wan2:            # второй провайдер для проверки резерва/балансировки -> eth2
+      #   priority: 50   # раскомментируйте и здесь, и в networks ниже; включите WAN2 на eth2 в вебе
 
 # Две тестовые сети — получаем eth0 (wan) и eth1 (lan) внутри контейнера
 networks:
@@ -45,3 +47,5 @@ networks:
   lan:
     driver: bridge
     internal: true
+  # wan2:
+  #   driver: bridge

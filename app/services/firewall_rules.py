@@ -190,10 +190,16 @@ def delete_forward(fid: int) -> None:
 
 # --- статус ---------------------------------------------------------------------------------------
 def status() -> FirewallStatus:
-    from app.services import lan, vpn
+    from app.services import lan, vpn, wan
     cfg = lan.get_config()
     active = [x for x in lan.segments() if x.enabled]
     wan_if = lan.wan_interface()
+    try:
+        wans = wan.active_interfaces()
+    except Exception:  # noqa: BLE001
+        wans = []
+    if len(wans) > 1:
+        wan_if = ", ".join(wans)
     vpn_rules = vpn.firewall_rules()
     c = firewall.counters()
     return FirewallStatus(

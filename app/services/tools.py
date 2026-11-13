@@ -372,3 +372,62 @@ async def scan(params: dict) -> AsyncIterator[dict]:
 
 
 TOOLS = {"ping": ping, "port_scan": port_scan, "traceroute": traceroute, "scan": scan}
+
+
+# --- Wake-on-LAN -------------------------------------------------------------------------------
+MAC_RE = re.compile(r"^([0-9a-f]{2})[:-]?([0-9a-f]{2})[:-]?([0-9a-f]{2})[:-]?([0-9a-f]{2})[:-]?([0-9a-f]{2})[:-]?([0-9a-f]{2})$")
+SO_BINDTODEVICE = getattr(socket, "SO_BINDTODEVICE", 25)
+
+
+def normalize_mac(mac: str) -> str:
+    m = MAC_RE.match((mac or "").strip().lower())
+    if not m:
+        raise ToolError("MAC-адрес: шесть пар шестнадцатеричных цифр, например 3c:52:82:aa:bb:cc")
+    out = ":".join(m.groups())
+    if out in ("00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff") or int(m.group(1), 16) & 1:
+        raise ToolError(f"MAC-адрес {out} — не адрес устройства")
+    return out
+
+
+def magic_packet(mac: str) -> bytes:
+    """6 байт FF и 16 раз MAC: так сетевая карта узнаёт, что будят именно её."""
+    return b"\xff" * 6 + bytes.fromhex(mac.replace(":", "")) * 16
+
+
+def wol_targets(mac: str, lan_id: str | None = None) -> list:
+    """Сегменты, куда слать: заданный; иначе тот, где устройство получало адрес; иначе все."""
+    from app.services import lan
+    segs = [s for s in lan.segments() if s.enabled]
+    if lan_id:
+        segs = [s for s in segs if s.id == lan_id or s.name == lan_id or s.bridge == lan_id]
+        if not segs:
+            raise ToolError(f"нет включённого сегмента LAN «{lan_id}»")
+        return segs
+    known = {x.lan for x in lan.leases() if x.mac.lower() == mac}
+    known |= {s.id for s in segs for x in lan.static_leases(s.id) if x.mac.lower() == mac}
+    return [s for s in segs if s.id in known] or segs
+
+
+def send_wol(mac: str, bridge: str, broadcast: str, repeat: int = 3) -> None:
+    pkt = magic_packet(mac)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        sock.setsockopt(socket.SOL_SOCKET, SO_BINDTODEVICE, bridge.encode())
+        for _ in range(repeat):
+            sock.sendto(pkt, (broadcast, 9))
+
+
+def wol(mac: str, lan_id: str | None = None) -> dict:
+    mac = normalize_mac(mac)
+    sent = []
+    for s in wol_targets(mac, lan_id):
+        bcast = str(s.network.broadcast_address)
+        try:
+            send_wol(mac, s.bridge, bcast)
+        except OSError as e:
+            raise ToolError(f"не удалось отправить пакет в {s.bridge}: {e}") from e
+        sent.append({"lan": s.id, "name": s.name, "bridge": s.bridge, "broadcast": bcast})
+    if not sent:
+        raise ToolError("нет включённых сегментов LAN")
+    print(f"[tools] Wake-on-LAN {mac} → {', '.join(x['bridge'] for x in sent)}")
+    return {"mac": mac, "sent": sent}

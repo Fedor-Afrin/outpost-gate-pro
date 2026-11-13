@@ -19,6 +19,8 @@ from app.services import routing as routing_svc
 from app.services import exporters as exporters_svc
 from app.services import files as files_svc
 from app.services import monitor as monitor_svc
+from app.services import multiwan as multiwan_svc
+from app.services import ntp as ntp_svc
 from app.services import vpn as vpn_svc
 from app.services import wan as wan_svc
 
@@ -32,10 +34,13 @@ async def lifespan(_: FastAPI):
     await asyncio.to_thread(agent.apply_startup)
     ssh = await ssh_server.start()             # CLI в стиле MikroTik по SSH
     monitor_svc.collector.start()              # метрики для дашборда и экспорта (раз в 10 с)
+    multiwan_svc.checker.start()               # два провайдера: проверка связи и переключение
     yield
     if ssh:
         ssh.close()
+    multiwan_svc.checker.stop()
     monitor_svc.collector.stop()
+    ntp_svc.stop()
     exporters_svc.stop()           # snmpd и Zabbix agent
     routing_svc.stop()
     vpn_svc.stop_all()

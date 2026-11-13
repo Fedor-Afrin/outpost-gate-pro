@@ -26,36 +26,47 @@ def _lease_from_env(env) -> tuple[str, str | None, list[str], int]:
 
 
 def handle(event: str, env=os.environ) -> None:
-    state = wan.load_state()
+    wid = env.get("WAN_ID") or "wan1"            # wan1 / wan2: какой провайдер
+    state = wan.load_state(wid)
     ifname = env.get("interface") or state.get("interface")
+    multi = wan.multi()
 
     if event == "deconfig":
-        wan.cleanup(state)
+        keep = {k: state[k] for k in ("base", "vlan") if k in state}   # VLAN-интерфейс остаётся
+        wan.cleanup({**state, "vlan": None}, wid)
         state.update(interface=ifname, state="searching", address=None, gateway=None, dns=[],
-                     lease_expires=None)
-        print(f"[dhcp] {ifname}: нет аренды, ищу DHCP-сервер")
+                     lease_expires=None, **keep)
+        print(f"[dhcp] {wid} {ifname}: нет аренды, ищу DHCP-сервер")
 
     elif event in ("bound", "renew"):
         address, gateway, dns, lease = _lease_from_env(env)
+        state["gateway_prev"] = state.get("gateway")
         if state.get("address") and state["address"] != address:
             netlink.addr_del(ifname, state["address"])
         netlink.addr_add(ifname, address)
-        if state.get("gateway") and state["gateway"] != gateway:
-            netlink.route_del("0.0.0.0/0", state["gateway"], None, wan.WAN_METRIC)
-        if gateway:
-            netlink.route_add("0.0.0.0/0", gateway, None, wan.WAN_METRIC, proto=netlink.RTPROT_DHCP)
         state.update(interface=ifname, state="bound", address=address, gateway=gateway, dns=dns,
                      lease_expires=time.time() + lease if lease else None)
-        wan.write_upstream_dns(wan.get_config().dns or dns)   # DNS, заданные вручную, важнее
+        if multi:
+            wan.save_state(state, wid)               # мульти-WAN читает адрес и шлюз из состояния
+            from app.services import multiwan
+            multiwan.sync()
+            wan.refresh_upstream_dns()
+        else:
+            if state.get("gateway_prev") and state["gateway_prev"] != gateway:
+                netlink.route_del("0.0.0.0/0", state["gateway_prev"], None, wan.WAN_METRIC)
+            if gateway:
+                netlink.route_add("0.0.0.0/0", gateway, None, wan.WAN_METRIC, proto=netlink.RTPROT_DHCP)
+            wan.write_upstream_dns(wan.get_config().dns or dns)   # DNS, заданные вручную, важнее
         from app.services import vpn
         vpn.refresh_endpoint_route()      # шлюз мог смениться — маршрут до VPN-сервера через новый
-        print(f"[dhcp] {ifname}: {event} {address} gw {gateway} dns {' '.join(dns)} lease {lease}s")
+        print(f"[dhcp] {wid} {ifname}: {event} {address} gw {gateway} dns {' '.join(dns)} lease {lease}s")
 
     elif event in ("leasefail", "nak"):
         state["state"] = "searching"
-        print(f"[dhcp] {ifname}: {event}")
+        print(f"[dhcp] {wid} {ifname}: {event}")
 
-    wan.save_state(state)
+    state.pop("gateway_prev", None)
+    wan.save_state(state, wid)
 
 
 if __name__ == "__main__":

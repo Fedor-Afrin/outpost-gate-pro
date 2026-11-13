@@ -113,6 +113,21 @@ bgp instance/network/peer/session, route), `/export`.
 - Готовый стек Prometheus + Grafana с дашбордом и шаблон Zabbix — в deploy/monitoring (см. README там).
 - CLI: `/tool torch`, `/snmp print | set`, `/system monitoring print`, `/interface monitor-traffic`.
 
+## Два провайдера (WAN → WAN2, «Резерв и балансировка»)
+- WAN2 — второй провайдер на отдельном порту (DHCP или вручную, при необходимости VLAN).
+- Резерв: весь трафик через основной канал; упал — через запасной, вернулся — обратно.
+  Балансировка: оба канала сразу, новые соединения делятся по весам.
+- Проверка связи — ping до заданных адресов через каждый канал; пороги «упал» и «вернулся».
+- У каждого канала своя таблица маршрутов, соединения помечаются (ct mark) и не перескакивают
+  между каналами; проброс портов работает с обоих WAN. Подробно — в app/services/multiwan.py.
+- CLI: `/ip wan2 print | set`, `/ip multiwan print | set`.
+
+## Время (System → Время (NTP)) и Wake-on-LAN
+- chrony синхронизирует время и раздаёт его LAN; DHCP-опция 42 указывает на роутер. В Docker часы
+  подводит хост, роутер только раздаёт время; в режиме host — подводит сам.
+- Wake-on-LAN: кнопка «Разбудить» у устройств в DHCP и вкладка Tools → Wake-on-LAN; CLI `/tool wol`.
+- CLI: `/system ntp client print | set`, `/system ntp server print | set`.
+
 ## Дорожная карта
 - [x] Каркас
 - [x] Advanced: IP Addresses, IP Routes (двигатель)
@@ -127,4 +142,5 @@ bgp instance/network/peer/session, route), `/export`.
 - [x] CLI в стиле MikroTik по SSH: ~70 команд, сокращения, print detail, set/move, Tab со значениями, /system shell
 - [x] Веб-интерфейс без раздела Advanced: адреса и маршруты — в CLI
 - [x] Pro: OSPF/BGP, LAN-сегменты + Kea + BIND 9, Samba, VLAN 802.1Q, мониторинг (дашборд, Prometheus, SNMP, Zabbix)
-- [ ] Дальше: резервный WAN, NTP / DDNS / планировщик / Wake-on-LAN, скрипт установки на ВМ и железо, HTTPS
+- [x] Pro: два провайдера (резерв и балансировка), NTP, Wake-on-LAN
+- [ ] Дальше: скрипт установки на ВМ и железо, DDNS (вместе с VPN-сервером), планировщик, HTTPS
