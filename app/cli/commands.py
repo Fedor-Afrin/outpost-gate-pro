@@ -935,7 +935,12 @@ def log_print(ctx, pos, named):
 
 
 def export(ctx, pos, named):
-    ctx.out(ctx.api.call("GET", "/api/system/backup", raw=True).rstrip())
+    """Как в RouterOS: команды; show-sensitive — с ключами и паролями; format=yaml — router.yaml целиком."""
+    if (named.get("format") or "").lower() == "yaml":
+        ctx.out(ctx.api.call("GET", "/api/system/backup", raw=True).rstrip())
+        return
+    show = "show-sensitive" in pos or yes(named.get("show-sensitive"))
+    ctx.out(ctx.api.call("GET", f"/api/system/export?show_sensitive={'true' if show else 'false'}", raw=True).rstrip())
 
 
 # --- диагностика (на самом роутере) ----------------------------------------------------------------------------------
@@ -1674,6 +1679,223 @@ def wol_cmd(ctx, pos, named):
     ctx.out(f"magic packet sent to {(r or {}).get('mac', mac)}" + (f" via {', '.join(x['bridge'] for x in sent)}" if sent else ""))
 
 
+def clock_set(ctx, pos, named):
+    require(named, "time-zone-name")
+    _ntp_put(ctx, timezone=named["time-zone-name"])
+
+
+# --- планировщик и очереди (/system scheduler, /queue) ----------------------------------------------------------
+DAY_NAMES = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+
+
+def _interval_min(text: str) -> int:
+    t = text.strip().lower()
+    mult = {"m": 1, "h": 60, "d": 1440}
+    if t[-1:] in mult and t[:-1].isdigit():
+        return int(t[:-1]) * mult[t[-1]]
+    if t.isdigit():
+        return int(t)
+    raise CliError(f"interval: например 15m, 1h или 1d, а не '{text}'")
+
+
+def _schedule_from(named: dict, base: dict | None = None) -> dict:
+    s = dict(base or {"kind": "daily", "time": "08:00"})
+    if "cron" in named:
+        return {"kind": "cron", "cron": named["cron"]}
+    t = named.get("start-time", s.get("time", "08:00"))
+    if "start-date" in named:
+        return {"kind": "once", "at": f"{named['start-date']}T{t}"}
+    if "days" in named:
+        days = [DAY_NAMES.index(d.strip()[:3].lower()) for d in named["days"].split(",") if d.strip()[:3].lower() in DAY_NAMES]
+        return {"kind": "weekly", "time": t, "days": days}
+    if "interval" in named:
+        m = _interval_min(named["interval"])
+        return {"kind": "daily", "time": t} if m == 1440 else {"kind": "interval", "every": m}
+    if "start-time" in named:
+        s.update(time=t, kind=s.get("kind") if s.get("kind") in ("daily", "weekly") else "daily")
+    return s
+
+
+def _action_from(named: dict, base: dict | None = None) -> dict:
+    a = dict(base or {})
+    if "on-event" in named:
+        a = {"type": named["on-event"]}
+    for k, f in (("mac", "mac"), ("lan", "lan"), ("device", "device"), ("wan", "wan")):
+        if k in named:
+            a[f] = named[k]
+    if "target" in named:
+        a["target"] = int(named["target"])
+    if "set-enabled" in named:
+        a["enabled"] = yes(named["set-enabled"])
+    return a
+
+
+def scheduler_print(ctx, pos, named):
+    d = ctx.api.get("/api/scheduler")
+    tasks = d["tasks"]
+    ctx.numbers["/system scheduler"] = tasks
+    ctx.out(f"time-zone: {d['timezone']}")
+    table(ctx, ["name", "schedule", "next-run", "last-run"],
+          [[t["name"], t["description"], (t["next_run"] or "").replace("T", " "),
+            ("" if t["last_run"] is None else ("ok " if t["last_ok"] else "fail ") + t["last_run"][:16].replace("T", " "))]
+           for t in tasks], flags=["" if t["enabled"] else "X" for t in tasks], legend="X - disabled")
+
+
+def scheduler_add(ctx, pos, named):
+    require(named, "name", "on-event")
+    body = {"name": named["name"], "enabled": not yes(named.get("disabled")),
+            "schedule": _schedule_from(named), "action": _action_from(named)}
+    ctx.api.post("/api/scheduler/tasks", body)
+
+
+def _task_body(t: dict) -> dict:
+    return {k: t[k] for k in ("name", "enabled", "schedule", "action")}
+
+
+def scheduler_set(ctx, pos, named):
+    for t in pick(ctx, "/system scheduler", pos, named):
+        body = _task_body(t)
+        if "name" in named:
+            body["name"] = named["name"]
+        if "disabled" in named:
+            body["enabled"] = not yes(named["disabled"])
+        if any(k in named for k in ("cron", "start-time", "start-date", "days", "interval")):
+            body["schedule"] = _schedule_from(named, t["schedule"])
+        body["action"] = _action_from(named, t["action"])
+        ctx.api.put(f"/api/scheduler/tasks/{t['id']}", body)
+
+
+def _scheduler_toggle(on: bool):
+    def fn(ctx, pos, named):
+        for t in pick(ctx, "/system scheduler", pos, named):
+            ctx.api.put(f"/api/scheduler/tasks/{t['id']}", {**_task_body(t), "enabled": on})
+    return fn
+
+
+def scheduler_remove(ctx, pos, named):
+    for t in pick(ctx, "/system scheduler", pos, named):
+        ctx.api.delete(f"/api/scheduler/tasks/{t['id']}")
+
+
+def scheduler_run(ctx, pos, named):
+    for t in pick(ctx, "/system scheduler", pos, named):
+        r = ctx.api.post(f"/api/scheduler/tasks/{t['id']}/run") or {}
+        ctx.out(f"{t['name']}: {'ok' if r.get('ok') else 'fail'} — {r.get('message', '')}")
+
+
+def parse_rate(text: str) -> float | None:
+    """'10M' -> 10.0 Мбит/с, '512k' -> 0.512, '1G' -> 1000, '0' -> без ограничения."""
+    t = (text or "").strip().lower().removesuffix("bps")
+    if t in ("", "0", "unlimited"):
+        return None
+    mult = {"k": 0.001, "m": 1.0, "g": 1000.0}
+    try:
+        return round(float(t[:-1]) * mult[t[-1]], 3) if t[-1] in mult else float(t) / 1_000_000
+    except (ValueError, KeyError):
+        raise CliError(f"скорость: например 10M, 512k или 1G, а не '{text}'")
+
+
+def parse_limit(text: str) -> tuple[float | None, float | None]:
+    """max-limit=отдача/загрузка, как в RouterOS."""
+    up, _, down = text.partition("/")
+    return parse_rate(up), parse_rate(down or up)
+
+
+def _fmt_rate(v) -> str:
+    if not v:
+        return "unlimited"
+    return f"{v:g}M" if v >= 1 else f"{v * 1000:g}k"
+
+
+def _qos(ctx) -> dict:
+    import copy
+    return copy.deepcopy(ctx.api.get("/api/qos"))
+
+
+def queue_settings_print(ctx, pos, named):
+    d = _qos(ctx)
+    c = d["config"]
+    kv(ctx, [("enabled", c["enabled"]), ("active", d["active"]),
+             ("wan-limit", f'{_fmt_rate(c.get("wan_up"))}/{_fmt_rate(c.get("wan_down"))}'),
+             ("voice-priority", c["voice"]), ("sip-ports", c["sip_ports"]), ("rtp-ports", c["rtp_ports"]),
+             ("error", d.get("error"))])
+
+
+def queue_settings_set(ctx, pos, named):
+    c = _qos(ctx)["config"]
+    if "enabled" in named:
+        c["enabled"] = yes(named["enabled"])
+    if "wan-limit" in named:
+        c["wan_up"], c["wan_down"] = parse_limit(named["wan-limit"])
+    if "voice-priority" in named:
+        c["voice"] = yes(named["voice-priority"])
+    for k, f in (("sip-ports", "sip_ports"), ("rtp-ports", "rtp_ports")):
+        if k in named:
+            c[f] = named[k]
+    ctx.api.put("/api/qos", c)
+
+
+def queue_segment_print(ctx, pos, named):
+    d = _qos(ctx)
+    lim = {x["lan"]: x for x in d["config"]["segments"]}
+    table(ctx, ["segment", "network", "max-limit"],
+          [[s["name"], s["network"], f'{_fmt_rate((lim.get(s["id"]) or {}).get("up"))}/{_fmt_rate((lim.get(s["id"]) or {}).get("down"))}']
+           for s in d["segments"]])
+
+
+def queue_segment_set(ctx, pos, named):
+    require(named, "lan", "max-limit")
+    d = _qos(ctx)
+    seg = next((s for s in d["segments"] if named["lan"] in (s["id"], s["name"])), None)
+    if not seg:
+        raise CliError(f"нет сегмента {named['lan']}")
+    up, down = parse_limit(named["max-limit"])
+    c = d["config"]
+    c["segments"] = [x for x in c["segments"] if x["lan"] != seg["id"]]
+    if up or down:
+        c["segments"].append({"lan": seg["id"], "up": up, "down": down})
+    ctx.api.put("/api/qos", c)
+
+
+def queue_simple_print(ctx, pos, named):
+    d = _qos(ctx)
+    devs = d["config"]["devices"]
+    ctx.numbers["/queue simple"] = devs
+    table(ctx, ["name", "target", "max-limit"],
+          [[x.get("name") or "", x["ip"], f'{_fmt_rate(x.get("up"))}/{_fmt_rate(x.get("down"))}'] for x in devs],
+          flags=["" if x["enabled"] else "X" for x in devs], legend="X - disabled")
+
+
+def queue_simple_add(ctx, pos, named):
+    require(named, "target", "max-limit")
+    c = _qos(ctx)["config"]
+    up, down = parse_limit(named["max-limit"])
+    c["devices"].append({"ip": named["target"], "name": named.get("name"), "up": up, "down": down,
+                         "enabled": not yes(named.get("disabled"))})
+    ctx.api.put("/api/qos", c)
+
+
+def _queue_edit(fn):
+    def run(ctx, pos, named):
+        picked = {x["ip"] for x in pick(ctx, "/queue simple", pos, named)}
+        c = _qos(ctx)["config"]
+        c["devices"] = [d for d in (fn(x, named) if x["ip"] in picked else x for x in c["devices"]) if d]
+        ctx.api.put("/api/qos", c)
+    return run
+
+
+def _qs_set(x, named):
+    if "max-limit" in named:
+        x["up"], x["down"] = parse_limit(named["max-limit"])
+    if "name" in named:
+        x["name"] = named["name"] or None
+    if "target" in named:
+        x["ip"] = named["target"]
+    if "disabled" in named:
+        x["enabled"] = not yes(named["disabled"])
+    return x
+
+
 # --- дерево меню ------------------------------------------------------------------------------------------------------
 P = "показать"
 
@@ -1884,10 +2106,25 @@ ROOT = Menu("OutpostGate Pro", {
         "resource": Menu("ресурсы", {"print": Cmd(resource_print, P)}),
         "identity": Menu("имя роутера", {"print": Cmd(identity_print, P),
                                           "set": Cmd(identity_set, "set name=...", ("name",))}),
-        "clock": Menu("время", {"print": Cmd(clock_print, P)}),
+        "clock": Menu("время", {"print": Cmd(clock_print, P),
+                                "set": Cmd(clock_set, "set time-zone-name=Asia/Jerusalem", ("time-zone-name",))}),
         "routerboard": Menu("устройство", {"print": Cmd(routerboard_print, P)}),
         "package": Menu("версия", {"print": pr(package_print)}),
         "monitoring": Menu("мониторинг и экспорт (Prometheus, SNMP, Zabbix)", {"print": Cmd(monitoring_print, P)}),
+        "scheduler": Menu("задачи по расписанию", {
+            "print": Cmd(scheduler_print, P),
+            "add": Cmd(scheduler_add, "add name=wake on-event=wol mac=3c:52:82:aa:bb:cc start-time=08:00 days=mon,tue,wed,thu,fri",
+                       ("name", "start-time", "start-date", "interval", "days", "cron", "on-event", "mac", "lan", "target", "device", "set-enabled", "wan", "disabled"),
+                       {"on-event": ["wol", "lan_segment", "firewall_rule", "port_forward", "vpn", "qos_device", "backup",
+                                     "wan_renew", "multiwan_primary", "restart"],
+                        "set-enabled": YESNO, "disabled": YESNO, "wan": ["wan1", "wan2"]}),
+            "set": Cmd(scheduler_set, "set 0 start-time=09:00 | interval=15m | cron=\"0 8 * * 1-5\"", ("numbers",) + ("name", "start-time", "start-date", "interval", "days", "cron", "on-event", "mac", "lan", "target", "device", "set-enabled", "wan", "disabled"),
+                       {"set-enabled": YESNO, "disabled": YESNO}),
+            "enable": Cmd(_scheduler_toggle(True), "включить", ("numbers",)),
+            "disable": Cmd(_scheduler_toggle(False), "выключить", ("numbers",)),
+            "remove": Cmd(scheduler_remove, "удалить", ("numbers",)),
+            "run": Cmd(scheduler_run, "выполнить сейчас: run 0", ("numbers",)),
+        }),
         "ntp": Menu("время (chrony)", {
             "client": Menu("синхронизация роутера", {
                 "print": Cmd(ntp_client_print, P),
@@ -1920,6 +2157,29 @@ ROOT = Menu("OutpostGate Pro", {
         "torch": Cmd(torch, "кто качает: torch segment=LAN count=20", ("segment", "count")),
         "wol": Cmd(wol_cmd, "разбудить компьютер: wol mac=3c:52:82:aa:bb:cc interface=br-lan", ("mac", "interface")),
     }),
+    "queue": Menu("QoS: ограничения скорости и приоритет голосу", {
+        "settings": Menu("общие настройки", {
+            "print": Cmd(queue_settings_print, P),
+            "set": Cmd(queue_settings_set, "set enabled=yes wan-limit=50M/200M voice-priority=yes",
+                       ("enabled", "wan-limit", "voice-priority", "sip-ports", "rtp-ports"),
+                       {"enabled": YESNO, "voice-priority": YESNO}),
+        }),
+        "segment": Menu("лимиты сегментов LAN", {
+            "print": Cmd(queue_segment_print, P),
+            "set": Cmd(queue_segment_set, "set lan=Guests max-limit=5M/20M (отдача/загрузка; 0 — без лимита)",
+                       ("lan", "max-limit")),
+        }),
+        "simple": Menu("лимиты устройств", {
+            "print": Cmd(queue_simple_print, P),
+            "add": Cmd(queue_simple_add, "add name=laptop target=192.168.88.20 max-limit=2M/10M",
+                       ("name", "target", "max-limit", "disabled"), {"disabled": YESNO}),
+            "set": Cmd(_queue_edit(_qs_set), "set 0 max-limit=5M/20M", ("numbers", "name", "target", "max-limit", "disabled"),
+                       {"disabled": YESNO}),
+            "enable": Cmd(_queue_edit(lambda x, n: {**x, "enabled": True}), "включить", ("numbers",)),
+            "disable": Cmd(_queue_edit(lambda x, n: {**x, "enabled": False}), "выключить", ("numbers",)),
+            "remove": Cmd(_queue_edit(lambda x, n: None), "удалить", ("numbers",)),
+        }),
+    }),
     "snmp": Menu("SNMP-агент", {
         "print": Cmd(snmp_print, P),
         "set": Cmd(snmp_set, "set enabled=yes community=office allowed=10.0.0.5 | version=v3 user=zbx",
@@ -1928,7 +2188,8 @@ ROOT = Menu("OutpostGate Pro", {
     }),
     "ping": Cmd(ping, "ping 8.8.8.8 count=4 interface=wg0", ("address", "count", "interface"), IFACE),
     "traceroute": Cmd(traceroute, "traceroute 8.8.8.8", ("address", "max-hops", "interface"), IFACE),
-    "export": Cmd(export, "вся конфигурация (router.yaml)"),
+    "export": Cmd(export, "конфигурация командами (show-sensitive — с секретами; format=yaml — router.yaml)",
+                  ("show-sensitive", "format"), {"show-sensitive": YESNO, "format": ["rsc", "yaml"]}),
     "quit": Cmd(quit_cmd, "выйти"),
 })
 GLOBAL = ("ping", "traceroute", "export", "quit", "password")      # работают из любого меню

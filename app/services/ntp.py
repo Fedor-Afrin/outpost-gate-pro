@@ -86,9 +86,34 @@ def running() -> bool:
     return _chronyd.running()
 
 
+def apply_timezone(tz: str | None) -> None:
+    """Часовой пояс процесса роутера: время в журнале, вебе и расписании планировщика."""
+    if not tz or os.environ.get("TZ") == tz:
+        return
+    os.environ["TZ"] = tz
+    try:
+        import time as _time
+        _time.tzset()
+    except AttributeError:
+        pass
+    print(f"[ntp] часовой пояс: {tz}")
+
+
+def current_timezone() -> str:
+    tz = os.environ.get("TZ")
+    if tz:
+        return tz
+    try:
+        link = os.readlink("/etc/localtime")
+        return link.split("zoneinfo/", 1)[1]
+    except (OSError, IndexError):
+        return "UTC"
+
+
 def apply(cfg: NtpConfig | None = None) -> None:
     global _error
     cfg = cfg or get_config()
+    apply_timezone(cfg.timezone)
     with _lock:
         _chronyd.stop()
         if not cfg.enabled:
@@ -154,6 +179,14 @@ def stop() -> None:
     _chronyd.stop()
 
 
+def _zones() -> list[str]:
+    try:
+        from zoneinfo import available_timezones
+        return sorted(z for z in available_timezones() if "/" in z and not z.startswith(("Etc/", "SystemV/", "posix/", "right/")))
+    except Exception:  # noqa: BLE001
+        return []
+
+
 # --- состояние (chronyc) ----------------------------------------------------------------------
 def parse_tracking(csv: str) -> dict:
     """chronyc -c tracking: RefID,имя,stratum,время,смещение системы,…,leap."""
@@ -197,7 +230,8 @@ def status() -> NtpStatus:
     cfg = get_config()
     st = NtpStatus(config=cfg, installed=installed(), running=running(), clock_control=clock_control(),
                    serving=lan_networks() if serves_lan(cfg) else [],
-                   time=datetime.now().astimezone().isoformat(timespec="seconds"), error=_error)
+                   time=datetime.now().astimezone().isoformat(timespec="seconds"), error=_error,
+                   timezone=current_timezone(), timezones=_zones())
     if st.running:
         tr = parse_tracking(_chronyc("tracking"))
         st.synced, st.stratum = tr.get("synced", False), tr.get("stratum")

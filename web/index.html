@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>OutpostGate Pro</title>
-  <link rel="stylesheet" href="css/style.css?v=0.16.0">
+  <link rel="stylesheet" href="css/style.css?v=0.17.0">
 </head>
 <body>
   <!-- вход -->
@@ -47,8 +47,10 @@
       <a href="#files" data-page="files">Files</a>
       <a href="#vpn" data-page="vpn">VPN</a>
       <a href="#firewall" data-page="firewall">Firewall</a>
+      <a href="#qos" data-page="qos">QoS</a>
       <a href="#routing" data-page="routing">Routing</a>
       <a href="#tools" data-page="tools">Tools</a>
+      <a href="#scheduler" data-page="scheduler">Scheduler</a>
       <a href="#system" data-page="system">System</a>
     </nav>
     <p id="sysinfo"></p>
@@ -1060,6 +1062,54 @@
       </form>
     </section>
 
+    <!-- QoS -->
+    <section id="page-qos" class="page">
+      <h1>QoS</h1>
+      <div class="card wide">
+        <div class="status-grid">
+          <div><span class="label">Очереди</span><span id="qos-state">—</span></div>
+        </div>
+        <p class="error" id="qos-error"></p>
+      </div>
+      <form id="qos-form" class="card form wide">
+        <h2>Общие настройки</h2>
+        <label class="check"><input type="checkbox" name="qos_enabled"> Включить QoS</label>
+        <label class="row">Скорость провайдера: загрузка, Мбит/с <input name="wan_down" type="number" min="0.1" step="0.1" placeholder="например 190"></label>
+        <label class="row">Скорость провайдера: отдача, Мбит/с <input name="wan_up" type="number" min="0.1" step="0.1" placeholder="например 45"></label>
+        <p class="hint">Укажите 90–95 % от реальной скорости по тарифу: тогда очередь собирается на роутере, а не в модеме провайдера, и приоритет голосу работает. Без скорости отдачи голос в интернет не приоритизируется.</p>
+        <label class="check"><input type="checkbox" name="voice"> Приоритет голосу (SIP и RTP вперёд остального трафика)</label>
+        <label class="row">Порты SIP <input name="sip_ports" placeholder="5060-5061"></label>
+        <label class="row">Порты RTP <input name="rtp_ports" placeholder="10000-20000"></label>
+        <p class="hint">Пакетам на этих портах роутер ставит метку DSCP EF (46) — по ней голос узнают очереди роутера и оборудование провайдера. Телефоны и АТС, которые сами ставят EF, тоже попадают в приоритет.</p>
+
+        <h2 class="mt">Ограничения сегментов</h2>
+        <table class="compact edit-table">
+          <thead><tr><th>Сегмент</th><th>Сеть</th><th>Загрузка, Мбит/с</th><th>Отдача, Мбит/с</th></tr></thead>
+          <tbody id="qos-segments"></tbody>
+        </table>
+        <p class="hint">Общая скорость всех устройств сегмента. Пусто — без ограничения (загрузка — не больше скорости провайдера).</p>
+
+        <h2 class="mt">Ограничения устройств</h2>
+        <table class="compact edit-table">
+          <thead><tr><th>Вкл.</th><th>Имя</th><th>IP-адрес</th><th>Загрузка, Мбит/с</th><th>Отдача, Мбит/с</th><th></th></tr></thead>
+          <tbody id="qos-devices"></tbody>
+        </table>
+        <div class="toolbar">
+          <button type="button" class="link" id="qos-add">+ Устройство</button>
+          <select id="qos-from-dhcp"><option value="">+ из списка DHCP…</option></select>
+        </div>
+        <p class="hint">По IP-адресу: закрепите адрес устройства в DHCP, чтобы ограничение не «уехало» на другое. Ограничения можно включать и выключать по расписанию (Scheduler).</p>
+        <div class="toolbar mt"><button type="submit">Применить</button><span id="qos-ok" class="ok"></span><span id="qos-form-error" class="error"></span></div>
+      </form>
+      <div class="card wide">
+        <h2>Очереди сейчас</h2>
+        <table class="compact">
+          <thead><tr><th>Очередь</th><th>Интерфейс</th><th class="num">Передано</th><th class="num">Пакетов</th><th class="num">Отброшено</th></tr></thead>
+          <tbody id="qos-stats"></tbody>
+        </table>
+      </div>
+    </section>
+
     <!-- Tools -->
     <section id="page-tools" class="page">
       <h1>Tools</h1>
@@ -1120,6 +1170,64 @@
       </div>
     </section>
 
+    <!-- Scheduler -->
+    <section id="page-scheduler" class="page">
+      <h1>Scheduler</h1>
+      <div class="card wide">
+        <p class="hint" id="sch-clock"></p>
+        <table class="compact">
+          <thead><tr><th>Задача</th><th>Расписание и действие</th><th>Следующий запуск</th><th>Последний запуск</th><th></th></tr></thead>
+          <tbody id="sch-tasks"></tbody>
+        </table>
+        <p><span id="sch-msg" class="ok"></span><span id="sch-error" class="error"></span></p>
+      </div>
+      <form id="sch-form" class="card form wide">
+        <h2 id="sch-form-title">Новая задача</h2>
+        <label class="row">Название <input name="name" maxlength="64" required placeholder="Разбудить ПК бухгалтера"></label>
+        <label class="check"><input type="checkbox" name="enabled" checked> Задача включена</label>
+        <h3>Когда</h3>
+        <label class="row">Расписание
+          <select name="kind">
+            <option value="daily">каждый день</option>
+            <option value="weekly">по дням недели</option>
+            <option value="interval">каждые N минут</option>
+            <option value="once">один раз</option>
+            <option value="cron">cron (для опытных)</option>
+          </select></label>
+        <label class="row" data-k="daily weekly">Время <input name="time" type="time" value="08:00"></label>
+        <div class="row-block" data-k="weekly"><span>Дни недели</span>
+          <div class="port-list" id="sch-days"></div></div>
+        <label class="row" data-k="interval">Каждые, минут <input name="every" type="number" min="1" max="1440" value="60"></label>
+        <label class="row" data-k="once">Дата и время <input name="at" type="datetime-local"></label>
+        <label class="row" data-k="cron">Выражение cron <input name="cron" placeholder="0 8 * * 1-5"></label>
+        <p class="hint" data-k="cron">5 полей: минута, час, день месяца, месяц, день недели (0 и 7 — воскресенье). Пример: */15 8-18 * * 1-5 — каждые 15 минут с 8 до 18 по будням.</p>
+        <h3>Что сделать</h3>
+        <label class="row">Действие <select name="type" id="sch-type"></select></label>
+        <label class="row" data-a="wol">Устройство <select name="device_pick" id="sch-wol-pick"></select></label>
+        <label class="row" data-a="wol">MAC-адрес <input name="mac" placeholder="3c:52:82:aa:bb:cc"></label>
+        <label class="row" data-a="lan_segment">Сегмент <select name="lan" id="sch-lan"></select></label>
+        <label class="row" data-a="firewall_rule">Правило <select name="rule" id="sch-rule"></select></label>
+        <label class="row" data-a="port_forward">Проброс <select name="forward" id="sch-forward"></select></label>
+        <label class="row" data-a="qos_device">Ограничение <select name="qdev" id="sch-qdev"></select></label>
+        <label class="row" data-a="lan_segment firewall_rule port_forward vpn qos_device">Сделать
+          <select name="onoff"><option value="1">включить</option><option value="0">выключить</option></select></label>
+        <label class="row" data-a="wan_renew multiwan_primary">Канал
+          <select name="wan"><option value="wan1">WAN1</option><option value="wan2">WAN2</option></select></label>
+        <div class="toolbar mt">
+          <button type="submit">Сохранить</button>
+          <button type="button" id="sch-cancel">Отмена</button>
+          <span id="sch-form-error" class="error"></span>
+        </div>
+      </form>
+      <div class="card wide">
+        <h2>Журнал запусков</h2>
+        <table class="compact">
+          <thead><tr><th>Время</th><th>Задача</th><th>Результат</th></tr></thead>
+          <tbody id="sch-log"></tbody>
+        </table>
+      </div>
+    </section>
+
     <!-- System -->
     <section id="page-system" class="page">
       <h1>System</h1>
@@ -1150,6 +1258,8 @@
         </div>
         <form id="ntp-form" class="card form">
           <h2>Настройки</h2>
+          <label class="row">Часовой пояс <select name="timezone" id="ntp-tz"></select></label>
+          <p class="hint">По нему — время в журнале, вебе и расписание планировщика.</p>
           <label class="check"><input type="checkbox" name="enabled"> Включить NTP (chrony)</label>
           <label class="row">Серверы времени <input name="servers" placeholder="pool.ntp.org, time.google.com"></label>
           <label class="check"><input type="checkbox" name="serve_lan"> Раздавать время устройствам LAN</label>
@@ -1215,6 +1325,16 @@
           </div>
         </div>
         <div class="card wide">
+          <h2>Экспорт командами</h2>
+          <p class="hint">Вся конфигурация в виде команд CLI, как /export в RouterOS: удобно читать, сравнивать версии и пересылать. Секреты (ключи VPN, пароли, токены) по умолчанию скрыты.</p>
+          <div class="toolbar">
+            <button type="button" id="export-show">Показать</button>
+            <label class="check"><input type="checkbox" id="export-secrets"> с секретами</label>
+            <a class="button" id="export-download" href="/api/system/export?download=true">⬇ Скачать .rsc</a>
+          </div>
+          <pre id="export-text" class="export-text" hidden></pre>
+        </div>
+        <div class="card wide">
           <h2>Автоматические снимки</h2>
           <p class="hint">Перед каждым изменением роутер сохраняет предыдущую версию конфигурации (последние 50).</p>
           <table class="compact"><thead><tr><th>Время</th><th>Размер</th><th></th></tr></thead>
@@ -1233,8 +1353,8 @@
 
   </main>
 
-  <script src="js/i18n-dict.js?v=0.16.0"></script>
-  <script src="js/i18n.js?v=0.16.0"></script>
-  <script src="js/app.js?v=0.16.0"></script>
+  <script src="js/i18n-dict.js?v=0.17.0"></script>
+  <script src="js/i18n.js?v=0.17.0"></script>
+  <script src="js/app.js?v=0.17.0"></script>
 </body>
 </html>

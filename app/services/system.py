@@ -153,6 +153,8 @@ def validate_config(data) -> None:
     from app.models.routing import RoutingConfig
     from app.models.wan import MultiWanConfig, Wan2Config, WanConfig
     from app.models.ntp import NtpConfig
+    from app.models.qos import QosConfig
+    from app.models.scheduler import Task
     from app.models.wireguard import WgConfig
     from app.services import firewall_rules
     if not isinstance(data, dict):
@@ -162,6 +164,9 @@ def validate_config(data) -> None:
         Wan2Config(**(data.get("wan2") or {}))
         MultiWanConfig.model_validate(data.get("multiwan") or {})
         NtpConfig.model_validate(data.get("ntp") or {})
+        QosConfig.model_validate(data.get("qos") or {})
+        for t in (data.get("scheduler") or {}).get("tasks") or []:
+            Task.model_validate(t)
         LanConfig.from_yaml(data.get("lan"), data.get("firewall"))
         for s in (((data.get("lan") or {}).get("dhcp-server") or {}).get("static-leases") or []):
             StaticLease(**s)
