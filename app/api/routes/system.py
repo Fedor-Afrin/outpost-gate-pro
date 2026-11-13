@@ -18,6 +18,7 @@
   POST /api/system/safe-mode/commit | /rollback
   GET  /api/system/audit?limit=           журнал действий
   POST /api/system/restart                перезапустить сервис роутера
+  GET  /api/system/export?show_sensitive=&download=   конфигурация командами, как /export в RouterOS
   GET  /api/system/ntp                    NTP: настройки, синхронизация, источники времени
   PUT  /api/system/ntp                    сохранить и применить (chrony)
 """
@@ -116,6 +117,14 @@ def update_user(name: str, body: UserUpdate):
 def delete_user(name: str, request: Request):
     _auth(auth.delete_user, name, _me(request))
     return auth.list_users()
+
+
+@router.get("/export")
+def export_config(show_sensitive: bool = False, download: bool = False):
+    from app.services import export
+    stamp = datetime.now().strftime("%Y%m%d-%H%M")
+    headers = {"Content-Disposition": f'attachment; filename="{svc.identity()}-{stamp}.rsc"'} if download else None
+    return PlainTextResponse(export.export_current(show_sensitive), headers=headers)
 
 
 @router.get("/backup")

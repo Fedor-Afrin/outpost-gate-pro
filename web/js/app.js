@@ -1858,6 +1858,8 @@ async function loadSystemPage() {
       || `<tr><td colspan="5" class="hint">${c.enabled ? "источников пока нет" : "NTP выключен"}</td></tr>`;
     if (!ntpFormLoaded) {
       const f = $("#ntp-form");
+      $("#ntp-tz").innerHTML = `<option value="">${esc(I18N.t("как у системы ({tz})", { tz: n.timezone }))}</option>`
+        + n.timezones.map((z) => `<option ${z === c.timezone ? "selected" : ""}>${esc(z)}</option>`).join("");
       f.enabled.checked = c.enabled; f.servers.value = c.servers.join(", ");
       f.serve_lan.checked = c.serve_lan; f.orphan.checked = c.orphan;
       ntpFormLoaded = true;
@@ -1878,7 +1880,7 @@ $("#ntp-form").addEventListener("submit", async (ev) => {
   $("#ntp-ok").textContent = ""; $("#ntp-form-error").textContent = "";
   try {
     await api("PUT", "/api/system/ntp", { enabled: f.enabled.checked, servers: f.servers.value.split(/[\s,;]+/).filter(Boolean),
-      serve_lan: f.serve_lan.checked, orphan: f.orphan.checked });
+      serve_lan: f.serve_lan.checked, orphan: f.orphan.checked, timezone: f.timezone.value || null });
     ntpFormLoaded = false;
     $("#ntp-ok").textContent = "Применено";
     await loadSystemPage();
@@ -2355,6 +2357,247 @@ $("#mon-form").addEventListener("submit", async (ev) => {
   } catch (e) { $("#mon-error").textContent = e.message; }
 });
 
+// ---------------------------------------------------------------- QoS
+let qosData = null;
+let qosFormLoaded = false;
+let qosDhcp = [];
+
+function qosDeviceRow(d = {}) {
+  return `<tr data-row><td><input type="checkbox" name="enabled" ${d.enabled === false ? "" : "checked"}></td>
+    <td><input name="name" value="${esc(d.name ?? "")}" size="16"></td>
+    <td><input name="ip" value="${esc(d.ip ?? "")}" size="15" placeholder="192.168.88.20"></td>
+    <td><input name="down" type="number" min="0.1" step="0.1" class="narrow" value="${d.down ?? ""}"></td>
+    <td><input name="up" type="number" min="0.1" step="0.1" class="narrow" value="${d.up ?? ""}"></td>
+    <td><button type="button" class="danger" data-del-row>✕</button></td></tr>`;
+}
+
+function fillQosForm() {
+  const f = $("#qos-form"), c = qosData.config;
+  f.qos_enabled.checked = c.enabled; f.voice.checked = c.voice;
+  f.wan_down.value = c.wan_down ?? ""; f.wan_up.value = c.wan_up ?? "";
+  f.sip_ports.value = c.sip_ports; f.rtp_ports.value = c.rtp_ports;
+  const lim = Object.fromEntries(c.segments.map((x) => [x.lan, x]));
+  $("#qos-segments").innerHTML = qosData.segments.map((s) => `<tr data-seg="${esc(s.id)}"><td>${esc(s.name)}</td><td>${esc(s.network)}</td>
+    <td><input name="down" type="number" min="0.1" step="0.1" class="narrow" value="${lim[s.id]?.down ?? ""}"></td>
+    <td><input name="up" type="number" min="0.1" step="0.1" class="narrow" value="${lim[s.id]?.up ?? ""}"></td></tr>`).join("")
+    || '<tr><td colspan="4" class="hint">нет включённых сегментов LAN</td></tr>';
+  $("#qos-devices").innerHTML = c.devices.map(qosDeviceRow).join("");
+}
+
+async function loadQos() {
+  qosData = await api("GET", "/api/qos");
+  const c = qosData.config;
+  $("#qos-state").innerHTML = !c.enabled ? "выключены" : qosData.active ? '<span class="flag-r">работают</span>'
+    : '<span class="flag-x">не применились</span>';
+  $("#qos-error").textContent = qosData.error ?? "";
+  $("#qos-stats").innerHTML = qosData.stats.map((x) => `<tr><td>${esc(x.label)}</td><td>${esc(x.dev)}</td>
+    <td class="num">${fmt(x.bytes)}</td><td class="num">${x.packets}</td><td class="num">${x.drops}</td></tr>`).join("")
+    || `<tr><td colspan="5" class="hint">${c.enabled ? "нет данных" : "QoS выключен"}</td></tr>`;
+  if (!qosFormLoaded) {
+    fillQosForm(); qosFormLoaded = true;
+    try {
+      const d = await api("GET", "/api/dhcp");
+      const seen = new Set();
+      qosDhcp = [];
+      for (const s of d.segments) for (const x of s.static_leases ?? []) { seen.add(x.ip); qosDhcp.push({ ip: x.ip, name: x.name }); }
+      for (const x of d.leases) if (!seen.has(x.ip)) qosDhcp.push({ ip: x.ip, name: x.name ?? x.hostname });
+      $("#qos-from-dhcp").innerHTML = `<option value="">${esc(I18N.t("+ из списка DHCP…"))}</option>`
+        + qosDhcp.map((x, i) => `<option value="${i}">${esc(x.name ?? "—")} · ${esc(x.ip)}</option>`).join("");
+    } catch (e) { console.error(e); }
+  }
+}
+
+$("#qos-add").addEventListener("click", () => $("#qos-devices").insertAdjacentHTML("beforeend", qosDeviceRow()));
+$("#qos-from-dhcp").addEventListener("change", (ev) => {
+  const x = qosDhcp[Number(ev.target.value)];
+  if (x) $("#qos-devices").insertAdjacentHTML("beforeend", qosDeviceRow({ ip: x.ip, name: x.name }));
+  ev.target.value = "";
+});
+$("#qos-devices").addEventListener("click", (ev) => { const b = ev.target.closest("[data-del-row]"); if (b) b.closest("tr").remove(); });
+
+$("#qos-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const f = ev.target;
+  $("#qos-ok").textContent = ""; $("#qos-form-error").textContent = "";
+  const body = {
+    enabled: f.qos_enabled.checked, voice: f.voice.checked, wan_down: num(f.wan_down.value), wan_up: num(f.wan_up.value),
+    sip_ports: f.sip_ports.value, rtp_ports: f.rtp_ports.value,
+    segments: [...$("#qos-segments").querySelectorAll("tr[data-seg]")].map((r) => ({
+      lan: r.dataset.seg, down: num(r.querySelector("[name=down]").value), up: num(r.querySelector("[name=up]").value) }))
+      .filter((x) => x.down || x.up),
+    devices: [...$("#qos-devices").querySelectorAll("tr[data-row]")].map((r) => ({
+      enabled: r.querySelector("[name=enabled]").checked, name: opt(r.querySelector("[name=name]").value),
+      ip: r.querySelector("[name=ip]").value.trim(), down: num(r.querySelector("[name=down]").value),
+      up: num(r.querySelector("[name=up]").value) })).filter((x) => x.ip),
+  };
+  try {
+    qosData = await api("PUT", "/api/qos", body);
+    fillQosForm();
+    $("#qos-ok").textContent = "Применено";
+    await loadQos();
+  } catch (e) { $("#qos-form-error").textContent = e.message; }
+});
+
+// ---------------------------------------------------------------- Scheduler
+let schData = null;
+let schEdit = null;          // id редактируемой задачи; null — новая
+const SCH_DAYS = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"];
+$("#sch-days").innerHTML = SCH_DAYS.map((d, i) => `<label><input type="checkbox" value="${i}" ${i < 5 ? "checked" : ""}> ${d}</label>`).join("");
+
+function schKindChanged() {
+  const f = $("#sch-form"), k = f.kind.value, a = f.type.value;
+  f.querySelectorAll("[data-k]").forEach((el) => { el.hidden = !el.dataset.k.split(" ").includes(k); });
+  f.querySelectorAll("[data-a]").forEach((el) => { el.hidden = !el.dataset.a.split(" ").includes(a); });
+}
+$("#sch-form").addEventListener("change", (ev) => {
+  if (["kind", "type"].includes(ev.target.name)) schKindChanged();
+  if (ev.target.name === "device_pick" && ev.target.value) $("#sch-form").mac.value = ev.target.value;
+});
+
+function schFillSelects() {
+  const t = schData.targets, f = $("#sch-form");
+  const opts = (list, val, label) => list.map((x) => `<option value="${esc(val(x))}">${esc(label(x))}</option>`).join("");
+  $("#sch-type").innerHTML = opts(Object.entries(schData.actions), (x) => x[0], (x) => x[1]);
+  $("#sch-wol-pick").innerHTML = `<option value="">${esc(I18N.t("— ввести MAC вручную —"))}</option>`
+    + opts(t.devices, (x) => x.mac, (x) => `${x.name ?? x.ip} · ${x.mac}`);
+  $("#sch-lan").innerHTML = opts(t.segments, (x) => x.name, (x) => x.name);
+  $("#sch-rule").innerHTML = opts(t.rules, (x) => x.id, (x) => `#${x.id} ${x.name}`) || `<option value="">${esc(I18N.t("нет правил"))}</option>`;
+  $("#sch-forward").innerHTML = opts(t.forwards, (x) => x.id, (x) => `#${x.id} ${x.name}`) || `<option value="">${esc(I18N.t("нет пробросов"))}</option>`;
+  $("#sch-qdev").innerHTML = opts(t.qos_devices, (x) => x.ip, (x) => `${x.name ?? ""} ${x.ip}`) || `<option value="">${esc(I18N.t("нет ограничений устройств"))}</option>`;
+  f.dataset.ready = "1";
+}
+
+function schResetForm(task) {
+  const f = $("#sch-form");
+  schEdit = task?.id ?? null;
+  $("#sch-form-title").textContent = task ? I18N.t("Задача: {n}", { n: task.name }) : "Новая задача";
+  $("#sch-form-error").textContent = "";
+  const s = task?.schedule ?? { kind: "daily", time: "08:00", days: [0, 1, 2, 3, 4], every: 60 };
+  const a = task?.action ?? { type: "wol", enabled: true, wan: "wan1" };
+  f.name.value = task?.name ?? ""; f.enabled.checked = task ? task.enabled : true;
+  f.kind.value = s.kind; f.time.value = s.time ?? "08:00"; f.every.value = s.every ?? 60;
+  f.at.value = s.at ?? ""; f.cron.value = s.cron ?? "";
+  $("#sch-days").querySelectorAll("input").forEach((c) => { c.checked = (s.days ?? []).includes(Number(c.value)); });
+  f.type.value = a.type; f.mac.value = a.mac ?? ""; f.device_pick.value = "";
+  if (a.lan) f.lan.value = a.lan;
+  if (a.type === "firewall_rule" && a.target != null) f.rule.value = a.target;
+  if (a.type === "port_forward" && a.target != null) f.forward.value = a.target;
+  if (a.device) f.qdev.value = a.device;
+  f.onoff.value = a.enabled === false ? "0" : "1"; f.wan.value = a.wan ?? "wan1";
+  schKindChanged();
+}
+
+async function loadScheduler() {
+  schData = await api("GET", "/api/scheduler");
+  if (!$("#sch-form").dataset.ready) { schFillSelects(); schResetForm(null); }
+  $("#sch-clock").textContent = I18N.t("Часовой пояс роутера: {tz} · сейчас {now} (изменить — System → Время)",
+    { tz: schData.timezone, now: new Date(schData.now).toLocaleString(I18N.locale()) });
+  const when = (x) => (x ? new Date(x).toLocaleString(I18N.locale()) : "—");
+  $("#sch-tasks").innerHTML = schData.tasks.map((t) => `<tr class="${t.enabled ? "" : "row-disabled"}">
+    <td><b>${esc(t.name)}</b></td><td data-no-i18n>${esc(schDescribe(t))}</td><td>${t.enabled ? when(t.next_run) : esc(I18N.t("выключена"))}</td>
+    <td>${t.last_run ? `${t.last_ok ? '<span class="dot ok"></span>' : '<span class="dot bad"></span>'} ${when(t.last_run)}` : "—"}</td>
+    <td class="actions"><button type="button" data-run="${t.id}">Выполнить</button>
+      <button type="button" data-edit="${t.id}">Изменить</button>
+      <button type="button" data-toggle="${t.id}">${t.enabled ? "Выключить" : "Включить"}</button>
+      <button type="button" data-del="${t.id}" class="danger">Удалить</button></td></tr>`).join("")
+    || '<tr><td colspan="5" class="hint">задач пока нет — добавьте первую ниже</td></tr>';
+  $("#sch-log").innerHTML = schData.log.map((r) => `<tr class="${r.ok ? "" : "row-inactive"}"><td>${when(r.time)}</td>
+    <td>${esc(r.name)}${r.manual ? ` <span class="hint">(${esc(I18N.t("вручную"))})</span>` : ""}</td><td>${esc(r.message)}</td></tr>`).join("")
+    || '<tr><td colspan="3" class="hint">запусков пока не было</td></tr>';
+}
+
+const schTask = (id) => schData.tasks.find((t) => t.id === Number(id));
+
+// описание задачи — из частей, каждая переводится словарём
+function schDescribe(t) {
+  const s = t.schedule, a = t.action, tr = (x, v) => I18N.t(x, v);
+  const days = (s.days ?? []).map((d) => tr(SCH_DAYS[d])).join(", ");
+  const when = s.kind === "daily" ? tr("каждый день в {t}", { t: s.time })
+    : s.kind === "weekly" ? tr("{d} в {t}", { d: days, t: s.time })
+    : s.kind === "interval" ? tr("каждые {n} мин", { n: s.every })
+    : s.kind === "once" ? tr("один раз {at}", { at: (s.at ?? "").replace("T", " ") })
+    : `cron ${s.cron}`;
+  const on = a.enabled !== false;
+  const what = {
+    wol: () => tr("разбудить {m}", { m: a.mac }),
+    lan_segment: () => tr(on ? "включить сегмент {s}" : "выключить сегмент {s}", { s: a.lan }),
+    firewall_rule: () => tr(on ? "включить правило #{n}" : "выключить правило #{n}", { n: a.target }),
+    port_forward: () => tr(on ? "включить проброс #{n}" : "выключить проброс #{n}", { n: a.target }),
+    vpn: () => tr(on ? "включить VPN" : "выключить VPN"),
+    qos_device: () => tr(on ? "включить ограничение {ip}" : "выключить ограничение {ip}", { ip: a.device }),
+    backup: () => tr("резервная копия конфигурации"),
+    wan_renew: () => tr("обновить аренду {w}", { w: a.wan.toUpperCase() }),
+    multiwan_primary: () => tr("основной канал — {w}", { w: a.wan.toUpperCase() }),
+    restart: () => tr("перезапуск сервиса"),
+  }[a.type]?.() ?? a.type;
+  return `${when} → ${what}`;
+}
+const schBody = (t) => ({ name: t.name, enabled: t.enabled, schedule: t.schedule, action: t.action });
+
+$("#sch-tasks").addEventListener("click", async (ev) => {
+  const b = ev.target.closest("button");
+  if (!b) return;
+  $("#sch-msg").textContent = ""; $("#sch-error").textContent = "";
+  try {
+    if (b.dataset.run) {
+      const r = await api("POST", `/api/scheduler/tasks/${b.dataset.run}/run`);
+      (r.ok ? $("#sch-msg") : $("#sch-error")).textContent = r.message;
+    } else if (b.dataset.edit) {
+      schResetForm(schTask(b.dataset.edit));
+      $("#sch-form").scrollIntoView({ behavior: "smooth" });
+      return;
+    } else if (b.dataset.toggle) {
+      const t = schTask(b.dataset.toggle);
+      await api("PUT", `/api/scheduler/tasks/${t.id}`, { ...schBody(t), enabled: !t.enabled });
+    } else if (b.dataset.del) {
+      if (!confirm(I18N.t("Удалить задачу «{n}»?", { n: schTask(b.dataset.del).name }))) return;
+      await api("DELETE", `/api/scheduler/tasks/${b.dataset.del}`);
+      if (schEdit === Number(b.dataset.del)) schResetForm(null);
+    }
+    await loadScheduler();
+  } catch (e) { $("#sch-error").textContent = e.message; }
+});
+
+$("#sch-cancel").addEventListener("click", () => schResetForm(null));
+
+$("#sch-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const f = ev.target;
+  $("#sch-form-error").textContent = "";
+  const kind = f.kind.value, type = f.type.value;
+  const schedule = { kind };
+  if (kind === "daily" || kind === "weekly") schedule.time = f.time.value;
+  if (kind === "weekly") schedule.days = [...$("#sch-days").querySelectorAll("input:checked")].map((c) => Number(c.value));
+  if (kind === "interval") schedule.every = Number(f.every.value);
+  if (kind === "once") schedule.at = f.at.value;
+  if (kind === "cron") schedule.cron = f.cron.value;
+  const action = { type, enabled: f.onoff.value === "1", wan: f.wan.value };
+  if (type === "wol") action.mac = f.mac.value.trim();
+  if (type === "lan_segment") action.lan = f.lan.value;
+  if (type === "firewall_rule") action.target = num(f.rule.value);
+  if (type === "port_forward") action.target = num(f.forward.value);
+  if (type === "qos_device") action.device = f.qdev.value;
+  const body = { name: f.name.value, enabled: f.enabled.checked, schedule, action };
+  try {
+    if (schEdit) await api("PUT", `/api/scheduler/tasks/${schEdit}`, body);
+    else await api("POST", "/api/scheduler/tasks", body);
+    schResetForm(null);
+    $("#sch-msg").textContent = "Сохранено";
+    await loadScheduler();
+  } catch (e) { $("#sch-form-error").textContent = e.message; }
+});
+
+// ---------------------------------------------------------------- экспорт командами
+$("#export-secrets").addEventListener("change", (ev) => {
+  $("#export-download").href = `/api/system/export?download=true${ev.target.checked ? "&show_sensitive=true" : ""}`;
+});
+$("#export-show").addEventListener("click", async () => {
+  const r = await fetch(`/api/system/export${$("#export-secrets").checked ? "?show_sensitive=true" : ""}`);
+  const pre = $("#export-text");
+  pre.textContent = r.ok ? await r.text() : `${r.status} ${r.statusText}`;
+  pre.hidden = false;
+});
+
 // ---------------------------------------------------------------- навигация
 const pages = {
   "status": loadStatus,
@@ -2367,6 +2610,8 @@ const pages = {
   "vpn": loadVpn,
   "firewall": loadFirewall,
   "routing": loadRouting,
+  "qos": loadQos,
+  "scheduler": loadScheduler,
   "tools": async () => {},          // инструменты обновляются сами, без опроса
   "system": () => (sysTab === "overview" ? loadSystemPage() : Promise.resolve()),
 };

@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.agent import apply as agent
 from app.api.routes import auth as auth_routes
-from app.api.routes import dhcp, dns, files, firewall, interfaces, ip_addresses, ip_routes, lan, monitor, routing, status, system, tools, vpn, wan
+from app.api.routes import dhcp, dns, files, firewall, interfaces, ip_addresses, ip_routes, lan, monitor, qos, routing, scheduler, status, system, tools, vpn, wan
 from app.core import auth
 from app.core.config import settings
 from app.services import ssh_server
@@ -21,6 +21,7 @@ from app.services import files as files_svc
 from app.services import monitor as monitor_svc
 from app.services import multiwan as multiwan_svc
 from app.services import ntp as ntp_svc
+from app.services import scheduler as scheduler_svc
 from app.services import vpn as vpn_svc
 from app.services import wan as wan_svc
 
@@ -35,9 +36,11 @@ async def lifespan(_: FastAPI):
     ssh = await ssh_server.start()             # CLI в стиле MikroTik по SSH
     monitor_svc.collector.start()              # метрики для дашборда и экспорта (раз в 10 с)
     multiwan_svc.checker.start()               # два провайдера: проверка связи и переключение
+    scheduler_svc.runner.start()               # задачи по расписанию
     yield
     if ssh:
         ssh.close()
+    scheduler_svc.runner.stop()
     multiwan_svc.checker.stop()
     monitor_svc.collector.stop()
     ntp_svc.stop()
@@ -92,6 +95,8 @@ app.include_router(firewall.router, prefix="/api/firewall", tags=["Firewall"])
 app.include_router(routing.router, prefix="/api/routing", tags=["Routing"])
 app.include_router(tools.router, prefix="/api/tools", tags=["Tools"])
 app.include_router(monitor.router, prefix="/api/monitor", tags=["Monitoring"])
+app.include_router(qos.router, prefix="/api/qos", tags=["QoS"])
+app.include_router(scheduler.router, prefix="/api/scheduler", tags=["Scheduler"])
 app.include_router(monitor.metrics_router)   # GET /metrics для Prometheus — до веб-файлов
 
 # API: интерфейсы, адреса, маршруты — двигатель под WAN / LAN / VPN; в вебе их нет, есть в CLI

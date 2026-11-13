@@ -252,3 +252,9 @@ td.num, th.num { text-align: end; font-variant-numeric: tabular-nums; white-spac
 [dir=rtl] .mtile .value, [dir=rtl] .mtile .sub, [dir=rtl] .chart-tip b, [dir=rtl] .chart-legend span { unicode-bidi: plaintext; }
 #tool-tabs, #sys-tabs, #wan-tabs { max-width: 1000px; }
 .tab { white-space: nowrap; }
+/* экспорт командами, планировщик, QoS */
+.export-text { max-height: 520px; overflow: auto; background: #f6f8fa; border: 1px solid #e3e6ea; border-radius: 4px;
+  padding: 10px 12px; font-size: 12px; line-height: 1.5; white-space: pre; margin: 10px 0 0; }
+#page-qos .edit-table input.narrow { width: 90px; }
+#sch-days label { display: inline-flex; gap: 4px; align-items: center; }
+[dir=rtl] .export-text { direction: ltr; text-align: left; }
