@@ -148,6 +148,7 @@ def validate_config(data) -> None:
     from app.models.l2tp import L2tpConfig
     from app.models.lan import LanConfig, StaticLease
     from app.models.dns import DnsConfig
+    from app.models.files import FilesConfig
     from app.models.routing import RoutingConfig
     from app.models.wan import WanConfig
     from app.models.wireguard import WgConfig
@@ -173,6 +174,7 @@ def validate_config(data) -> None:
             LanConfig.from_yaml(item, data.get("firewall"))
         if data.get("dns") is not None:
             DnsConfig.model_validate(data["dns"])
+        FilesConfig.model_validate(data.get("files") or {})
         for section in ("addresses", "routes"):
             items = (data.get("ip") or {}).get(section) or []
             if not isinstance(items, list):

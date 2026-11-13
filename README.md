@@ -76,6 +76,19 @@ bgp instance/network/peer/session, route), `/export`.
 - CLI: `/ip dhcp-server print`, `/ip dhcp-server network print`, `/ip dns print`, `/ip dns set servers=…`,
   `/ip dns static print | add name=pbx.office.lan address=192.168.88.5 | remove`.
 
+## Файловый сервер Samba (вкладка Files)
+- Общие папки на сегментах LAN (с WAN — никогда): чтение и запись по пользователям и группам,
+  гостевой доступ, корзина (.recycle/<пользователь>), совместимость с macOS (Finder, Time Machine).
+- Пользователи и группы файлового сервера (пароли хранит Samba в data/samba, в router.yaml их нет).
+- Тома: data — встроенное хранилище (data/shares); в режиме host — диски сервера: обнаружение,
+  подключение по UUID в /mnt/disks/<имя>, автоподключение при запуске, форматирование в ext4.
+  Диск, на котором стоит сам сервер, роутер не трогает. NTFS, exFAT и FAT32 подключаются с правами
+  для общих папок.
+- Подключения: кто, с какого компьютера, по какому протоколу, сколько файлов открыто.
+- CLI: `/ip smb print | set`, `/ip smb shares`, `/ip smb users`, `/ip smb groups`, `/ip smb sessions`,
+  `/ip smb disks`.
+- Режим host: в deploy/host/docker-compose.yml включены `privileged` и `/dev` — это нужно для дисков.
+
 ## OSPF и BGP (FRRouting)
 Вкладка **Routing**: соседи и маршруты, настройки OSPF и BGP. Роутер генерирует `/etc/frr/frr.conf`
 целиком, проверяет его (`vtysh --dryrun`) и применяет без разрыва сессий (`frr-reload.py`).

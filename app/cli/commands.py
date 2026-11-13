@@ -1279,6 +1279,205 @@ def routing_route_print(ctx, pos, named):
           legend="A - active, o - ospf, b - bgp")
 
 
+# --- /ip smb: файловый сервер Samba -----------------------------------------------------------
+def _smb(ctx) -> dict:
+    import copy
+    return copy.deepcopy(ctx.api.get("/api/files"))
+
+
+def _smb_put(ctx, cfg: dict) -> None:
+    ctx.api.put("/api/files", cfg)
+
+
+def smb_print(ctx, pos, named):
+    d = _smb(ctx)
+    c = d["config"]
+    kv(ctx, [("enabled", c["enabled"]), ("running", d["running"]), ("workgroup", c["workgroup"]),
+             ("netbios-name", d["netbios_name"]), ("interfaces", d["listen"] or "-"),
+             ("segments", c["segments"] or "all"), ("min-protocol", c["min_protocol"]), ("netbios", c["netbios"]),
+             ("shares", len(c["shares"])), ("users", len(c["users"])), ("sessions", len(d["sessions"]))])
+
+
+def smb_set(ctx, pos, named):
+    c = _smb(ctx)["config"]
+    if "enabled" in named:
+        c["enabled"] = yes(named["enabled"])
+    for k, f in (("workgroup", "workgroup"), ("netbios-name", "netbios_name"), ("comment", "server_string"),
+                 ("min-protocol", "min_protocol")):
+        if k in named:
+            c[f] = named[k] or None
+    if "segments" in named:
+        c["segments"] = [x for x in named["segments"].split(",") if x and x != "all"]
+    if "netbios" in named:
+        c["netbios"] = yes(named["netbios"])
+    _smb_put(ctx, c)
+
+
+def _who(value: str | None) -> list[str]:
+    return [x.strip() for x in (value or "").split(",") if x.strip()]
+
+
+def smb_shares_print(ctx, pos, named):
+    shares = _smb(ctx)["config"]["shares"]
+    ctx.numbers["/ip smb shares"] = shares
+    table(ctx, ["name", "directory", "read-users", "write-users", "guest", "recycle"],
+          [[s["name"], f'{s["volume"]}:/{s["folder"]}', s["read_users"] or None, s["write_users"] or None,
+            s["guest"], s["recycle"]] for s in shares],
+          flags=["" if s["enabled"] else "X" for s in shares], legend="X - disabled")
+
+
+def _share_apply(s: dict, named: dict) -> dict:
+    if "name" in named:
+        s["name"] = named["name"]
+    if "directory" in named:
+        vol, _, folder = named["directory"].partition(":")
+        s["volume"], s["folder"] = (vol, folder.lstrip("/")) if folder else ("data", vol.lstrip("/"))
+    for k, f in (("read-users", "read_users"), ("write-users", "write_users")):
+        if k in named:
+            s[f] = _who(named[k])
+    if "guest" in named:
+        s["guest"] = named["guest"]
+    if "comment" in named:
+        s["comment"] = named["comment"] or None
+    for k, f in (("recycle", "recycle"), ("browseable", "browseable"), ("macos", "macos")):
+        if k in named:
+            s[f] = yes(named[k])
+    if "disabled" in named:
+        s["enabled"] = not yes(named["disabled"])
+    return s
+
+
+def smb_shares_add(ctx, pos, named):
+    require(named, "name")
+    c = _smb(ctx)["config"]
+    s = _share_apply({"volume": "data", "folder": named["name"].lower(), "enabled": True, "browseable": True,
+                      "guest": "none", "read_users": [], "write_users": [], "recycle": True, "macos": False,
+                      "hide_dot_files": True}, named)
+    c["shares"].append(s)
+    _smb_put(ctx, c)
+
+
+def _share_change(fn):
+    def run(ctx, pos, named):
+        items = pick(ctx, "/ip smb shares", pos, named)
+        c = _smb(ctx)["config"]
+        names = {i["name"] for i in items}
+        c["shares"] = [x for s in c["shares"] for x in ([fn(s, named)] if s["name"] in names else [s]) if x]
+        _smb_put(ctx, c)
+    return run
+
+
+smb_shares_set = _share_change(lambda s, n: _share_apply(s, n))
+smb_shares_remove = _share_change(lambda s, n: None)
+smb_shares_enable = _share_change(lambda s, n: {**s, "enabled": True})
+smb_shares_disable = _share_change(lambda s, n: {**s, "enabled": False})
+
+
+def smb_users_print(ctx, pos, named):
+    d = _smb(ctx)
+    users = d["config"]["users"]
+    nopw = set(d["users_without_password"])
+    ctx.numbers["/ip smb users"] = users
+    table(ctx, ["name", "full-name", "groups", "password"],
+          [[u["name"], u.get("full_name"), u["groups"] or None, "not set" if u["name"] in nopw else "set"] for u in users],
+          flags=["" if u["enabled"] else "X" for u in users], legend="X - disabled")
+
+
+def smb_users_add(ctx, pos, named):
+    require(named, "name")
+    password = named.get("password") or ctx.secret("password: ")
+    ctx.api.post("/api/files/users", {"name": named["name"], "password": password,
+                                      "full_name": named.get("full-name") or None, "groups": _who(named.get("groups"))})
+
+
+def smb_users_set(ctx, pos, named):
+    items = pick(ctx, "/ip smb users", pos, named)
+    if "password" in named:
+        for u in items:
+            ctx.api.put(f'/api/files/users/{u["name"]}/password', {"password": named["password"]})
+    rest = {k: v for k, v in named.items() if k not in ("password", "numbers")}
+    if not rest:
+        return
+    c = _smb(ctx)["config"]
+    names = {i["name"] for i in items}
+    for u in c["users"]:
+        if u["name"] in names:
+            if "full-name" in rest:
+                u["full_name"] = rest["full-name"] or None
+            if "groups" in rest:
+                u["groups"] = _who(rest["groups"])
+            if "disabled" in rest:
+                u["enabled"] = not yes(rest["disabled"])
+    _smb_put(ctx, c)
+
+
+def _user_change(fn, remove: bool = False):
+    def run(ctx, pos, named):
+        items = pick(ctx, "/ip smb users", pos, named)
+        c = _smb(ctx)["config"]
+        names = {i["name"] for i in items}
+        if remove:
+            c["users"] = [u for u in c["users"] if u["name"] not in names]
+            for s in c["shares"]:           # и права на папки
+                s["read_users"] = [w for w in s["read_users"] if w not in names]
+                s["write_users"] = [w for w in s["write_users"] if w not in names]
+        else:
+            c["users"] = [fn(u) if u["name"] in names else u for u in c["users"]]
+        _smb_put(ctx, c)
+    return run
+
+
+smb_users_remove = _user_change(None, remove=True)
+smb_users_enable = _user_change(lambda u: {**u, "enabled": True})
+smb_users_disable = _user_change(lambda u: {**u, "enabled": False})
+
+
+def smb_groups_print(ctx, pos, named):
+    c = _smb(ctx)["config"]
+    ctx.numbers["/ip smb groups"] = c["groups"]
+    table(ctx, ["name", "comment", "members"],
+          [[g["name"], g.get("description"), [u["name"] for u in c["users"] if g["name"] in u["groups"]] or None]
+           for g in c["groups"]])
+
+
+def smb_groups_add(ctx, pos, named):
+    require(named, "name")
+    c = _smb(ctx)["config"]
+    c["groups"].append({"name": named["name"], "description": named.get("comment") or None})
+    _smb_put(ctx, c)
+
+
+def smb_groups_remove(ctx, pos, named):
+    items = pick(ctx, "/ip smb groups", pos, named)
+    c = _smb(ctx)["config"]
+    names = {i["name"] for i in items}
+    c["groups"] = [g for g in c["groups"] if g["name"] not in names]
+    for u in c["users"]:
+        u["groups"] = [g for g in u["groups"] if g not in names]
+    for s in c["shares"]:
+        s["read_users"] = [w for w in s["read_users"] if not (w.startswith("@") and w[1:] in names)]
+        s["write_users"] = [w for w in s["write_users"] if not (w.startswith("@") and w[1:] in names)]
+    _smb_put(ctx, c)
+
+
+def smb_sessions_print(ctx, pos, named):
+    ss = _smb(ctx)["sessions"]
+    table(ctx, ["user", "machine", "protocol", "shares", "open-files"],
+          [[s["user"], s["machine"], s.get("protocol"), s.get("share"), s["open_files"]] for s in ss], numbered=True)
+
+
+def smb_disks_print(ctx, pos, named):
+    d = _smb(ctx)
+    if not d["disks_allowed"]:
+        ctx.out("диски доступны только в режиме host")
+        return
+    devs = d["devices"]
+    table(ctx, ["device", "size", "fs", "label", "uuid", "volume"],
+          [[x["path"], x["size"], x.get("fstype"), x.get("label"), x.get("uuid"), x.get("mounted_as")] for x in devs],
+          flags=[("S" if x["system"] else "") + ("M" if x.get("mounted_as") else "") for x in devs],
+          legend="S - system (сервер), M - mounted")
+
+
 # --- дерево меню ------------------------------------------------------------------------------------------------------
 P = "показать"
 
@@ -1330,6 +1529,45 @@ ROOT = Menu("OutpostGate Pro", {
         }),
         "dhcp-client": Menu("DHCP-клиент WAN", {"print": pr(dhcp_client_print),
                                                  "renew": Cmd(dhcp_client_renew, "обновить аренду")}),
+        "smb": Menu("файловый сервер Samba", {
+            "print": Cmd(smb_print, P),
+            "set": Cmd(smb_set, "set enabled=yes workgroup=WORKGROUP segments=lan1,lan2 netbios=no",
+                       ("enabled", "workgroup", "netbios-name", "comment", "segments", "min-protocol", "netbios"),
+                       {"enabled": YESNO, "netbios": YESNO, "min-protocol": ["SMB2_10", "SMB3"]}),
+            "shares": Menu("общие папки", {
+                "print": pr(smb_shares_print),
+                "add": Cmd(smb_shares_add, "add name=Documents directory=data:/docs write-users=@acc read-users=boris",
+                           ("name", "directory", "read-users", "write-users", "guest", "comment", "recycle", "browseable",
+                            "macos", "disabled"),
+                           {"guest": ["none", "read", "write"], "recycle": YESNO, "browseable": YESNO, "macos": YESNO,
+                            "disabled": YESNO}),
+                "set": Cmd(smb_shares_set, "изменить: set 0 write-users=@acc,anna",
+                           ("numbers", "name", "directory", "read-users", "write-users", "guest", "comment", "recycle",
+                            "browseable", "macos", "disabled"),
+                           {"guest": ["none", "read", "write"], "recycle": YESNO, "browseable": YESNO, "macos": YESNO,
+                            "disabled": YESNO}),
+                "enable": Cmd(smb_shares_enable, "включить", ("numbers",)),
+                "disable": Cmd(smb_shares_disable, "выключить", ("numbers",)),
+                "remove": Cmd(smb_shares_remove, "удалить (файлы остаются)", ("numbers",)),
+            }),
+            "users": Menu("пользователи файлового сервера", {
+                "print": pr(smb_users_print),
+                "add": Cmd(smb_users_add, "add name=anna groups=acc full-name=\"Anna K\" (пароль спросит)",
+                           ("name", "password", "full-name", "groups")),
+                "set": Cmd(smb_users_set, "set 0 password=... | groups=acc,sales | disabled=yes",
+                           ("numbers", "password", "full-name", "groups", "disabled"), {"disabled": YESNO}),
+                "enable": Cmd(smb_users_enable, "включить", ("numbers",)),
+                "disable": Cmd(smb_users_disable, "выключить", ("numbers",)),
+                "remove": Cmd(smb_users_remove, "удалить", ("numbers",)),
+            }),
+            "groups": Menu("группы", {
+                "print": pr(smb_groups_print),
+                "add": Cmd(smb_groups_add, "add name=acc comment=Бухгалтерия", ("name", "comment")),
+                "remove": Cmd(smb_groups_remove, "удалить", ("numbers",)),
+            }),
+            "sessions": Menu("кто подключён", {"print": pr(smb_sessions_print)}),
+            "disks": Menu("диски сервера (режим host)", {"print": pr(smb_disks_print)}),
+        }),
         "dns": Menu("DNS-сервер (BIND)", {
             "print": Cmd(dns_print, P),
             "set": Cmd(dns_set, "set servers=1.1.1.1,8.8.8.8 forward-only=no dnssec=no cache-size=64MiB",

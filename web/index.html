@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>OutpostGate Pro</title>
-  <link rel="stylesheet" href="css/style.css?v=0.13.0">
+  <link rel="stylesheet" href="css/style.css?v=0.14.0">
 </head>
 <body>
   <!-- вход -->
@@ -43,6 +43,7 @@
       <a href="#lan" data-page="lan">LAN</a>
       <a href="#dhcp" data-page="dhcp">DHCP</a>
       <a href="#dns" data-page="dns">DNS</a>
+      <a href="#files" data-page="files">Files</a>
       <a href="#vpn" data-page="vpn">VPN</a>
       <a href="#firewall" data-page="firewall">Firewall</a>
       <a href="#routing" data-page="routing">Routing</a>
@@ -332,6 +333,177 @@
             <button type="button" id="zone-delete" class="danger">Удалить зону</button>
             <span class="error zone-error"></span>
             <span class="ok zone-ok"></span>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <!-- Files: файловый сервер Samba -->
+    <section id="page-files" class="page">
+      <h1>Files</h1>
+      <div class="tabs" id="files-tabs">
+        <a class="tab" data-tab="overview">Обзор</a>
+        <a class="tab" data-tab="shares">Общие папки</a>
+        <a class="tab" data-tab="users">Пользователи и группы</a>
+        <a class="tab" data-tab="disks">Диски</a>
+      </div>
+
+      <div id="fs-overview">
+        <div class="card">
+          <div class="status-grid">
+            <div><span class="label">Samba</span><span id="fs-state">—</span></div>
+            <div><span class="label">Имя в сети</span><span id="fs-name">—</span></div>
+            <div><span class="label">Адреса</span><span id="fs-listen">—</span></div>
+            <div><span class="label">Подключено</span><span id="fs-sess-count">—</span></div>
+          </div>
+          <span id="fs-error" class="error"></span>
+          <p class="hint" id="fs-howto"></p>
+        </div>
+
+        <form id="files-form" class="card form">
+          <h2>Сервер</h2>
+          <label class="check"><input type="checkbox" name="enabled"> Включить файловый сервер</label>
+          <label class="row">Рабочая группа <input name="workgroup" maxlength="15"></label>
+          <label class="row">Имя сервера в сети <input name="netbios_name" maxlength="15" placeholder="пусто — имя роутера"></label>
+          <label class="row">Описание <input name="server_string" maxlength="80"></label>
+          <div class="row-block"><span>Сегменты LAN</span>
+            <div id="fs-segments" class="port-list"></div>
+          </div>
+          <p class="hint">Ничего не отмечено — сервер работает на всех сегментах. С WAN файловый сервер недоступен никогда.</p>
+          <label class="row">Минимальный протокол
+            <select name="min_protocol">
+              <option value="SMB2_10">SMB 2.1 (Windows 7 и новее)</option>
+              <option value="SMB3">SMB 3 (Windows 8 и новее)</option>
+            </select>
+          </label>
+          <label class="check"><input type="checkbox" name="netbios"> NetBIOS — для старых Windows и сканеров, которые ищут сервер по имени</label>
+          <div class="toolbar">
+            <button type="submit">Применить</button>
+            <span class="error fs-form-error"></span>
+            <span class="ok fs-form-ok"></span>
+          </div>
+        </form>
+
+        <div class="card wide">
+          <h2>Тома</h2>
+          <table class="compact">
+            <thead><tr><th>Том</th><th>Путь</th><th>Размер</th><th>Свободно</th><th>Состояние</th></tr></thead>
+            <tbody id="fs-volumes"></tbody>
+          </table>
+          <p class="hint">data — встроенное хранилище роутера (папка data/shares). Диски подключаются во вкладке «Диски».</p>
+        </div>
+
+        <div class="card wide">
+          <h2>Подключения</h2>
+          <table class="compact">
+            <thead><tr><th>Пользователь</th><th>Компьютер</th><th>Протокол</th><th>Папки</th><th>Открыто файлов</th></tr></thead>
+            <tbody id="fs-sessions"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="fs-shares" hidden>
+        <div class="card wide">
+          <h2>Общие папки</h2>
+          <table class="compact">
+            <thead><tr><th>Имя</th><th>Путь</th><th>Чтение</th><th>Запись</th><th>Гости</th><th>Корзина</th><th></th></tr></thead>
+            <tbody id="fs-share-list"></tbody>
+          </table>
+          <button type="button" class="link" id="share-new">+ Новая папка</button>
+        </div>
+
+        <form id="share-form" class="card form wide" hidden>
+          <h2 id="share-form-title">Папка</h2>
+          <label class="check"><input type="checkbox" name="enabled"> Папка включена</label>
+          <label class="row">Имя в сети <input name="share_name" placeholder="Documents" maxlength="80"></label>
+          <label class="row">Том <select name="volume"></select></label>
+          <label class="row">Папка на томе <input name="folder" placeholder="documents"></label>
+          <label class="row wide-row">Описание <input name="comment" maxlength="120"></label>
+          <label class="check"><input type="checkbox" name="browseable"> Видна в сетевом окружении</label>
+
+          <h3>Доступ</h3>
+          <label class="row">Гости (без пароля)
+            <select name="guest">
+              <option value="none">Нет</option>
+              <option value="read">Только чтение</option>
+              <option value="write">Чтение и запись</option>
+            </select>
+          </label>
+          <table class="compact edit-table" id="share-access-table">
+            <thead><tr><th>Пользователь или группа</th><th>Нет доступа</th><th>Чтение</th><th>Чтение и запись</th></tr></thead>
+            <tbody id="share-access"></tbody>
+          </table>
+
+          <h3>Дополнительно</h3>
+          <label class="check"><input type="checkbox" name="recycle"> Корзина: удалённые файлы попадают в .recycle/&lt;пользователь&gt;</label>
+          <label class="check"><input type="checkbox" name="macos"> Совместимость с macOS (Finder, Time Machine)</label>
+          <label class="check"><input type="checkbox" name="hide_dot_files"> Скрывать файлы, начинающиеся с точки</label>
+          <div class="toolbar">
+            <button type="submit">Сохранить папку</button>
+            <button type="button" id="share-cancel">Отмена</button>
+            <span class="error share-error"></span>
+          </div>
+        </form>
+      </div>
+
+      <div id="fs-users" hidden>
+        <div class="card wide">
+          <h2>Пользователи</h2>
+          <table class="compact">
+            <thead><tr><th>Имя</th><th>ФИО</th><th>Группы</th><th>Пароль</th><th>Состояние</th><th></th></tr></thead>
+            <tbody id="fs-user-list"></tbody>
+          </table>
+          <span class="error fs-user-error"></span>
+        </div>
+        <form id="user-form" class="card form">
+          <h2>Новый пользователь</h2>
+          <label class="row">Имя для входа <input name="login" placeholder="anna" maxlength="32"></label>
+          <label class="row">ФИО <input name="full_name" maxlength="80"></label>
+          <label class="row">Пароль <input name="password" type="password" autocomplete="new-password"></label>
+          <div class="row-block"><span>Группы</span><div id="user-groups" class="port-list"></div></div>
+          <p class="hint">Пароль — не короче 6 символов. Это учётка только для файлового сервера, не для входа в роутер.</p>
+          <div class="toolbar">
+            <button type="submit">+ Создать</button>
+            <span class="error user-error"></span>
+          </div>
+        </form>
+
+        <div class="card wide">
+          <h2>Группы</h2>
+          <table class="compact">
+            <thead><tr><th>Группа</th><th>Описание</th><th>Участники</th><th></th></tr></thead>
+            <tbody id="fs-group-list"></tbody>
+          </table>
+          <form id="group-form" class="toolbar">
+            <input name="group" placeholder="accounting" maxlength="32">
+            <input name="description" placeholder="Бухгалтерия" maxlength="80">
+            <button type="submit">+ Добавить группу</button>
+            <span class="error group-error"></span>
+          </form>
+        </div>
+      </div>
+
+      <div id="fs-disks" hidden>
+        <div class="card wide">
+          <h2>Диски</h2>
+          <p class="hint" id="fs-disks-hint"></p>
+          <table class="compact">
+            <thead><tr><th>Устройство</th><th>Модель</th><th>Размер</th><th>Файловая система</th><th>Метка</th><th>Состояние</th><th></th></tr></thead>
+            <tbody id="fs-dev-list"></tbody>
+          </table>
+          <span class="error fs-disk-error"></span>
+        </div>
+        <form id="mount-form" class="card form" hidden>
+          <h2>Подключить раздел</h2>
+          <p class="hint" id="mount-what"></p>
+          <input type="hidden" name="uuid">
+          <label class="row">Имя тома <input name="volume_name" placeholder="archive" maxlength="32"></label>
+          <label class="check"><input type="checkbox" name="automount" checked> Подключать автоматически при запуске</label>
+          <label class="check"><input type="checkbox" name="read_only"> Только чтение</label>
+          <div class="toolbar">
+            <button type="submit">Подключить</button>
+            <button type="button" id="mount-cancel">Отмена</button>
+            <span class="error mount-error"></span>
           </div>
         </form>
       </div>
@@ -809,8 +981,8 @@
 
   </main>
 
-  <script src="js/i18n-dict.js?v=0.13.0"></script>
-  <script src="js/i18n.js?v=0.13.0"></script>
-  <script src="js/app.js?v=0.13.0"></script>
+  <script src="js/i18n-dict.js?v=0.14.0"></script>
+  <script src="js/i18n.js?v=0.14.0"></script>
+  <script src="js/app.js?v=0.14.0"></script>
 </body>
 </html>
