@@ -80,6 +80,7 @@ def test_read_leases_and_migration(tmp_path, monkeypatch):
     segs = [(seg(), []), (seg(id="lan2", address="10.20.0.1/24", ports=["eth3"]), [])]
     dhcp.migrate_dnsmasq_leases(segs)
     assert not (tmp_path / "dnsmasq.leases").exists()
+    assert b"\r" not in dhcp.leases_file().read_bytes()           # Kea не принимает \r\n
     rows = dhcp.read_leases({1: "lan1", 2: "lan2"}, now=1_800_000_000)
     assert [(r.ip, r.lan, r.hostname) for r in rows] == [("10.20.0.7", "lan2", None), ("192.168.88.20", "lan1", "GXP1625")]
     dhcp.migrate_dnsmasq_leases(segs)                                         # второй раз — ничего
@@ -219,3 +220,14 @@ def test_kea_dirs(tmp_path, monkeypatch):
     assert not (data / "kea-leases4.csv").exists()
     dhcp._prepare_dirs()                                           # повторно — ничего не ломает
     assert lib.is_symlink() and dhcp.leases_file().exists()
+
+
+def test_kea_leases_crlf_repaired(tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    (data / "kea").mkdir(parents=True)
+    monkeypatch.setattr(dhcp, "_data", lambda n: data / n)
+    monkeypatch.setattr(dhcp, "KEA_LIB", tmp_path / "lib")
+    monkeypatch.setattr(dhcp, "KEA_RUN", tmp_path / "run")
+    dhcp.leases_file().write_bytes(b"address,hwaddr,client_id\r\n")
+    dhcp._prepare_dirs()
+    assert dhcp.leases_file().read_bytes() == b"address,hwaddr,client_id\n"
