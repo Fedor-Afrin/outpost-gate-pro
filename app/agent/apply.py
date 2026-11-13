@@ -12,9 +12,10 @@ router.yaml — единый источник правды (аналог /export
   7. OSPF и BGP (FRRouting) — им нужны все интерфейсы и адреса;
      затем фаервол ещё раз (пропустить OSPF/BGP) и AllowedIPs туннеля (multicast OSPF)
   8. файловый сервер Samba — диски (автомонтирование), учётки, общие папки
+  9. экспорт мониторинга: snmpd, Zabbix agent (сбор метрик запускает main.py)
 Дальше: Status, Safe Mode.
 """
-from app.services import addresses, files, firewall, lan, routes, routing, sysctl, vpn, wan
+from app.services import addresses, exporters, files, firewall, lan, routes, routing, sysctl, vpn, wan
 
 
 def _step(name: str, fn) -> None:
@@ -41,3 +42,4 @@ def apply_startup() -> None:
         _step("фаервол (OSPF/BGP)", firewall.refresh)
         _step("VPN (OSPF multicast)", vpn.sync_allowed_ips)
     _step("файловый сервер", files.apply_startup)
+    _step("мониторинг (SNMP, Zabbix)", exporters.apply_startup)

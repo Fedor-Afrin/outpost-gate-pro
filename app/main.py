@@ -9,14 +9,16 @@ from fastapi.staticfiles import StaticFiles
 
 from app.agent import apply as agent
 from app.api.routes import auth as auth_routes
-from app.api.routes import dhcp, dns, files, firewall, interfaces, ip_addresses, ip_routes, lan, routing, status, system, tools, vpn, wan
+from app.api.routes import dhcp, dns, files, firewall, interfaces, ip_addresses, ip_routes, lan, monitor, routing, status, system, tools, vpn, wan
 from app.core import auth
 from app.core.config import settings
 from app.services import ssh_server
 from app.services import system as system_svc
 from app.services import lan as lan_svc
 from app.services import routing as routing_svc
+from app.services import exporters as exporters_svc
 from app.services import files as files_svc
+from app.services import monitor as monitor_svc
 from app.services import vpn as vpn_svc
 from app.services import wan as wan_svc
 
@@ -29,9 +31,12 @@ async def lifespan(_: FastAPI):
     # в отдельном потоке: pyroute2 не должен видеть цикл событий uvicorn
     await asyncio.to_thread(agent.apply_startup)
     ssh = await ssh_server.start()             # CLI в стиле MikroTik по SSH
+    monitor_svc.collector.start()              # метрики для дашборда и экспорта (раз в 10 с)
     yield
     if ssh:
         ssh.close()
+    monitor_svc.collector.stop()
+    exporters_svc.stop()           # snmpd и Zabbix agent
     routing_svc.stop()
     vpn_svc.stop_all()
     files_svc.stop()
@@ -81,6 +86,8 @@ app.include_router(vpn.router, prefix="/api/vpn", tags=["VPN"])
 app.include_router(firewall.router, prefix="/api/firewall", tags=["Firewall"])
 app.include_router(routing.router, prefix="/api/routing", tags=["Routing"])
 app.include_router(tools.router, prefix="/api/tools", tags=["Tools"])
+app.include_router(monitor.router, prefix="/api/monitor", tags=["Monitoring"])
+app.include_router(monitor.metrics_router)   # GET /metrics для Prometheus — до веб-файлов
 
 # API: интерфейсы, адреса, маршруты — двигатель под WAN / LAN / VPN; в вебе их нет, есть в CLI
 app.include_router(interfaces.router, prefix="/api/interfaces", tags=["Interfaces"])

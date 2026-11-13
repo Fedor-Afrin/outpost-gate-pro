@@ -495,3 +495,31 @@ def test_vlan_print(ctx):
     c.execute(cx, "/interface vlan print", [])
     assert out[2].split()[:5] == ["0", "R", "eth1.100", "100", "eth1"]
     assert out[3].split()[:5] == ["1", "R", "eth2.30", "30", "eth2"] and "Phones" in out[4]
+
+
+def test_monitoring_cli(ctx):
+    cx, out = ctx
+    cx.api.data["/api/monitor"] = {"time": 1, "accounting": True, "accounting_error": None, "clients": [
+        {"ip": "192.168.88.20", "name": "laptop", "segment": "LAN", "rx_rate": 125000, "tx_rate": 1000, "rx_bytes": 2048, "tx_bytes": 10},
+        {"ip": "10.30.0.5", "name": None, "segment": "Phones", "rx_rate": 0, "tx_rate": 0, "rx_bytes": 0, "tx_bytes": 0}]}
+    cx.api.data["/api/monitor/settings"] = {
+        "config": {"ping_targets": ["1.1.1.1"], "prometheus": {"enabled": True, "token": "x" * 20, "allowed": []},
+                   "snmp": {"enabled": True, "version": "v2c", "community": "office", "user": None, "contact": None,
+                            "location": "Rack", "allowed": ["10.0.0.5"]},
+                   "zabbix": {"enabled": False, "server": [], "server_active": None, "hostname": None, "metadata": None}},
+        "snmp": {"enabled": True, "installed": True, "running": True, "error": None, "flavor": None},
+        "zabbix": {"enabled": False, "installed": True, "running": False, "error": None, "flavor": "agent2"},
+        "lan_networks": ["192.168.88.0/24"]}
+    c.execute(cx, "/tool torch", [])
+    assert out[0].split()[:3] == ["#", "ADDRESS", "NAME"]
+    assert out[1].split()[:6] == ["0", "192.168.88.20", "laptop", "LAN", "1.0Mbps", "8.0kbps"]
+    out.clear()
+    c.execute(cx, "/snmp print", [])
+    assert any("community: office" in l for l in out) and any("allowed: 10.0.0.5" in l for l in out)
+    c.execute(cx, "/snmp set community=new allowed=10.0.0.0/24,10.1.0.5", [])
+    m, path, body = cx.api.calls[-1]
+    assert (m, path) == ("PUT", "/api/monitor/settings")
+    assert body["snmp"]["community"] == "new" and body["snmp"]["allowed"] == ["10.0.0.0/24", "10.1.0.5"]
+    out.clear()
+    c.execute(cx, "/system monitoring print", [])
+    assert any("prometheus-token: yes" in l for l in out) and any("snmp-running: yes" in l for l in out)

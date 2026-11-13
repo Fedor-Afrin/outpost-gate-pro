@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>OutpostGate Pro</title>
-  <link rel="stylesheet" href="css/style.css?v=0.14.0">
+  <link rel="stylesheet" href="css/style.css?v=0.15.0">
 </head>
 <body>
   <!-- вход -->
@@ -39,6 +39,7 @@
     <button type="button" id="safe-btn" class="safe-btn" title="Safe Mode: откат, если связь с роутером пропадёт">Safe Mode</button>
     <nav>
       <a href="#status" data-page="status">Status</a>
+      <a href="#monitor" data-page="monitor">Monitoring</a>
       <a href="#wan" data-page="wan">WAN</a>
       <a href="#lan" data-page="lan">LAN</a>
       <a href="#dhcp" data-page="dhcp">DHCP</a>
@@ -81,6 +82,115 @@
           <thead><tr><th>Интерфейс</th><th>Роль</th><th>Линк</th><th>↓ Сейчас</th><th>↑ Сейчас</th><th>↓ Всего</th><th>↑ Всего</th></tr></thead>
           <tbody id="st-traffic"></tbody>
         </table>
+      </div>
+    </section>
+
+    <!-- Monitoring -->
+    <section id="page-monitor" class="page">
+      <h1>Monitoring</h1>
+      <div class="tabs" id="mon-tabs">
+        <a class="tab" data-tab="overview">Обзор</a>
+        <a class="tab" data-tab="interfaces">Интерфейсы</a>
+        <a class="tab" data-tab="clients">Клиенты</a>
+        <a class="tab" data-tab="export">Экспорт</a>
+      </div>
+
+      <div id="mon-range" class="toolbar seg-buttons">
+        <span class="legend">Период:</span>
+        <button type="button" data-range="1h">1 час</button>
+        <button type="button" data-range="24h">24 часа</button>
+        <button type="button" data-range="7d">7 дней</button>
+        <button type="button" data-range="30d">30 дней</button>
+      </div>
+
+      <div id="mon-overview">
+        <div class="mon-tiles" id="mon-tiles"></div>
+        <div class="mon-grid">
+          <div class="card chart-card"><h2>Трафик WAN</h2><div class="chart" id="ch-wan"></div></div>
+          <div class="card chart-card"><h2>Задержка</h2><div class="chart" id="ch-rtt"></div></div>
+          <div class="card chart-card"><h2>CPU и память</h2><div class="chart" id="ch-sys"></div></div>
+          <div class="card chart-card"><h2>Потери пакетов</h2><div class="chart" id="ch-loss"></div></div>
+        </div>
+        <h2 class="mon-sub">Сегменты LAN и VPN</h2>
+        <div class="mon-grid" id="mon-seg-charts"></div>
+      </div>
+
+      <div id="mon-interfaces">
+        <div class="card wide">
+          <div class="table-scroll">
+            <table class="compact clickable">
+              <thead><tr><th>Интерфейс</th><th>Роль</th><th>Назначение</th><th>Линк</th><th class="num">Скорость порта</th>
+                <th class="num">↓ Приём</th><th class="num">↑ Передача</th><th class="num">↓ Всего</th><th class="num">↑ Всего</th><th class="num">Ошибки</th><th class="num">Потери</th></tr></thead>
+              <tbody id="mon-if-table"></tbody>
+            </table>
+          </div>
+          <p class="hint">Нажмите на строку — ниже появится график этого интерфейса.</p>
+        </div>
+        <div class="card wide chart-card"><h2 id="mon-if-title">—</h2><div class="chart tall" id="ch-if"></div></div>
+      </div>
+
+      <div id="mon-clients">
+        <div class="card wide">
+          <div class="toolbar">
+            <label>Сегмент <select id="mon-cl-seg"><option value="">все</option></select></label>
+            <input id="mon-cl-filter" placeholder="поиск: имя, IP, MAC">
+            <span class="legend" id="mon-cl-count"></span>
+          </div>
+          <p class="error" id="mon-cl-error"></p>
+          <div class="table-scroll">
+            <table class="compact">
+              <thead><tr><th>Устройство</th><th>IP</th><th>MAC</th><th>Сегмент</th>
+                <th class="num">↓ Загрузка</th><th class="num">↑ Отдача</th><th class="num">↓ Всего</th><th class="num">↑ Всего</th></tr></thead>
+              <tbody id="mon-cl-table"></tbody>
+            </table>
+          </div>
+          <p class="hint">Скорость — за последние 10 секунд, «всего» — с запуска роутера или с изменения сегментов LAN. Учитывается трафик через роутер (в интернет, VPN и другие сегменты).</p>
+        </div>
+      </div>
+
+      <div id="mon-export">
+        <div class="card"><p class="hint" id="mon-lan-access"></p></div>
+        <form id="mon-form" class="card form">
+          <h2>Проверка связи</h2>
+          <label class="row">Адреса для ping <input name="ping_targets" placeholder="1.1.1.1, 8.8.8.8"></label>
+          <p class="hint">Шлюз провайдера проверяется всегда. До 5 адресов через запятую — задержка и потери на графиках.</p>
+
+          <h2 class="mt">Prometheus</h2>
+          <label class="check"><input type="checkbox" name="prom_enabled"> Отдавать метрики для Prometheus (/metrics)</label>
+          <label class="row">Токен <input name="prom_token" placeholder="пусто — без токена" autocomplete="off"></label>
+          <div class="toolbar"><button type="button" id="mon-token-gen">Сгенерировать токен</button></div>
+          <label class="row">Откуда ещё <input name="prom_allowed" placeholder="10.0.0.5, 172.16.0.0/12"></label>
+          <p class="hint">Prometheus опрашивает адрес <code id="mon-prom-url">/metrics</code> с заголовком Authorization: Bearer &lt;токен&gt;. Готовый стек Prometheus + Grafana с дашбордом — в папке проекта deploy/monitoring.</p>
+
+          <h2 class="mt">SNMP</h2>
+          <label class="check"><input type="checkbox" name="snmp_enabled"> Включить SNMP-агент (UDP 161)</label>
+          <span class="exp-state" id="mon-snmp-state"></span>
+          <label class="row">Версия <select name="snmp_version"><option value="v2c">v2c — community</option><option value="v3">v3 — пользователь и пароли</option></select></label>
+          <div id="mon-snmp-v2">
+            <label class="row">Community <input name="snmp_community" maxlength="32"></label>
+          </div>
+          <div id="mon-snmp-v3">
+            <label class="row">Пользователь <input name="snmp_user" maxlength="32" autocomplete="off"></label>
+            <label class="row">Пароль аутентификации (SHA) <input name="snmp_auth" type="password" placeholder="не менять" autocomplete="new-password"></label>
+            <label class="row">Пароль шифрования (AES) <input name="snmp_priv" type="password" placeholder="не менять" autocomplete="new-password"></label>
+          </div>
+          <label class="row">Местоположение <input name="snmp_location" maxlength="80" placeholder="Серверная, 2 этаж"></label>
+          <label class="row">Контакт <input name="snmp_contact" maxlength="80" placeholder="admin@example.com"></label>
+          <label class="row">Откуда ещё <input name="snmp_allowed" placeholder="10.0.0.5"></label>
+          <p class="hint">Стандартные MIB: интерфейсы и трафик (IF-MIB), CPU, память и диски (HOST-RESOURCES). В Zabbix — шаблоны «Linux by SNMP» или «Network Generic Device by SNMP».</p>
+
+          <h2 class="mt">Zabbix agent</h2>
+          <label class="check"><input type="checkbox" name="zbx_enabled"> Включить Zabbix agent (TCP 10050)</label>
+          <span class="exp-state" id="mon-zbx-state"></span>
+          <label class="row">Адрес Zabbix server <input name="zbx_server" placeholder="10.0.0.5"></label>
+          <label class="row">ServerActive <input name="zbx_active" placeholder="пусто — только пассивные проверки"></label>
+          <label class="row">Имя узла <input name="zbx_hostname" placeholder="пусто — имя роутера"></label>
+          <label class="row">HostMetadata <input name="zbx_metadata" placeholder="для авторегистрации"></label>
+          <p class="hint">Zabbix server опрашивает агент — ему открывается порт 10050. Шаблон с ключами роутера (интерфейсы, связь, WAN, VPN, BGP, диски) — deploy/monitoring/zabbix_template_outpostgate.yaml.</p>
+
+          <div class="toolbar mt"><button type="submit">Применить</button>
+            <span class="ok" id="mon-ok"></span><span class="error" id="mon-error"></span></div>
+        </form>
       </div>
     </section>
 
@@ -990,8 +1100,8 @@
 
   </main>
 
-  <script src="js/i18n-dict.js?v=0.14.0"></script>
-  <script src="js/i18n.js?v=0.14.0"></script>
-  <script src="js/app.js?v=0.14.0"></script>
+  <script src="js/i18n-dict.js?v=0.15.0"></script>
+  <script src="js/i18n.js?v=0.15.0"></script>
+  <script src="js/app.js?v=0.15.0"></script>
 </body>
 </html>
