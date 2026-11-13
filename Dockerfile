@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         kea-dhcp4-server bind9 bind9-utils bind9-dnsutils \
         strongswan-charon strongswan-swanctl xl2tpd ppp \
         frr frr-pythontools \
+        samba samba-common-bin samba-vfs-modules fdisk e2fsprogs exfatprogs \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=awg-go /out/amneziawg-go /usr/local/bin/amneziawg-go

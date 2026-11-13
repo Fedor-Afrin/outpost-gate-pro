@@ -272,6 +272,11 @@ def _services(segs: list[LanConfig] | None = None) -> None:
         dns.apply()
     except dns.DnsError as e:
         raise LanError(e.status, e.message) from e
+    from app.services import files
+    try:
+        files.apply()             # Samba слушает мосты сегментов — они могли смениться
+    except files.FilesError as e:
+        print(f"[lan] WARNING: файловый сервер: {e.message}")
 
 
 def _dhcp_segments(segs: list[LanConfig]):

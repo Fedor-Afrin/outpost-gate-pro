@@ -9,11 +9,12 @@ router.yaml — единый источник правды (аналог /export
   4. VPN (WireGuard / AmneziaWG / L2TP: туннель, маршруты, kill switch)
   5. дополнительные адреса (CLI: /ip address)
   6. статические маршруты (CLI: /ip route)  — после адресов: шлюз должен быть доступен
-  7. OSPF и BGP (FRRouting) — последними: им нужны все интерфейсы и адреса;
+  7. OSPF и BGP (FRRouting) — им нужны все интерфейсы и адреса;
      затем фаервол ещё раз (пропустить OSPF/BGP) и AllowedIPs туннеля (multicast OSPF)
+  8. файловый сервер Samba — диски (автомонтирование), учётки, общие папки
 Дальше: Status, Safe Mode.
 """
-from app.services import addresses, firewall, lan, routes, routing, sysctl, vpn, wan
+from app.services import addresses, files, firewall, lan, routes, routing, sysctl, vpn, wan
 
 
 def _step(name: str, fn) -> None:
@@ -39,3 +40,4 @@ def apply_startup() -> None:
     if routing.active():
         _step("фаервол (OSPF/BGP)", firewall.refresh)
         _step("VPN (OSPF multicast)", vpn.sync_allowed_ips)
+    _step("файловый сервер", files.apply_startup)
