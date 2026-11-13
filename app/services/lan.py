@@ -99,6 +99,73 @@ def get_segment(seg_id: str, data: dict | None = None) -> LanConfig:
     raise LanError(404, f"нет сегмента {seg_id}")
 
 
+def renumber(ip: str, old_net, new_net, router_ip) -> str | None:
+    """Тот же номер хоста в новой сети: 192.168.88.20 (/24) -> 192.168.1.20. None — не помещается."""
+    try:
+        offset = int(ipaddress.ip_address(ip)) - int(old_net.network_address)
+    except ValueError:
+        return None
+    if offset <= 0 or offset >= new_net.num_addresses - 1:
+        return None
+    new = ipaddress.ip_address(int(new_net.network_address) + offset)
+    return None if new == router_ip else str(new)
+
+
+def coerce(seg_id: str, raw: dict) -> LanConfig:
+    """Разобрать изменённый сегмент. Если сменилась сеть, а диапазон пула остался от старой —
+    перенести его номера хостов в новую сеть (не помещаются — диапазон по умолчанию)."""
+    old = get_segment(seg_id)
+    raw = dict(raw)
+    try:
+        iface = ipaddress.ip_interface(str(raw.get("address") or ""))
+    except ValueError:
+        return LanConfig.model_validate(raw)           # ошибку адреса покажет сама модель
+    nn = iface.network
+    if old.network != nn and iface.version == 4:
+        old_ip, new_ip = old.router_ip, str(iface.ip)
+        opts = raw.get("dhcp_options")
+        if isinstance(opts, dict):                     # опции DHCP, указывавшие на роутер, — на новый адрес
+            opts = dict(opts)
+            for k in ("dns_servers", "ntp_servers", "wins_servers", "tftp_servers_150", "sip_servers"):
+                if isinstance(opts.get(k), list):
+                    opts[k] = [new_ip if x == old_ip else x for x in opts[k]]
+            if opts.get("tftp_server") == old_ip:
+                opts["tftp_server"] = new_ip
+            raw["dhcp_options"] = opts
+        moved = False
+        for k in ("pool_start", "pool_end"):
+            v = raw.get(k)
+            try:
+                inside = v and ipaddress.ip_address(v) in nn
+            except ValueError:
+                continue
+            if v and not inside:
+                raw[k] = renumber(v, old.network, nn, iface.ip)
+                moved = True
+        if moved:
+            try:
+                return LanConfig.model_validate(raw)
+            except ValueError:
+                raw["pool_start"] = raw["pool_end"] = None
+    return LanConfig.model_validate(raw)
+
+
+def renumber_segment(old: LanConfig | None, new: LanConfig, static: list[dict]) -> tuple[LanConfig, list[dict]]:
+    """Сеть сегмента сменилась: закреплённые адреса переезжают в новую сеть с тем же номером хоста.
+    (Диапазон пула переносится раньше, в coerce: модель не примет пул вне сети.)"""
+    if old is None or old.network == new.network:
+        return new, static
+    on, nn, rip = old.network, new.network, ipaddress.ip_interface(new.address).ip
+    out = []
+    for x in static:
+        ip = x.get("ip")
+        if ip and ipaddress.ip_address(ip) in on:
+            moved = renumber(ip, on, nn, rip)
+            x = {**x, "ip": moved} if moved else x
+        out.append(x)
+    return new, out
+
+
 def _save_segment(data: dict, seg: LanConfig) -> None:
     """Записать сегмент в data (yaml), сохранив его закреплённые адреса."""
     lan_yaml, fw_yaml = seg.to_yaml()
@@ -388,17 +455,26 @@ def _transaction(change) -> list[LanConfig]:
         return segs
 
 
+def _update_with_renumber(data: dict, seg_id: str, new: LanConfig) -> None:
+    old = next((s for s in segments(data) if s.id == seg_id), None)
+    new, static = renumber_segment(old, new, _static_raw(data, seg_id))
+    _save_segment(data, new)
+    if static:
+        item = data["lan"] if seg_id == "lan1" else next(i for i in data["lans"] if i.get("id") == seg_id)
+        item.setdefault("dhcp-server", {})["static-leases"] = static
+
+
 def update(new: LanConfig) -> LanStatus:
-    """Основной сегмент (PUT /api/lan)."""
+    """Основной сегмент (PUT /api/lan). Смена сети — диапазон и закреплённые адреса переезжают следом."""
     new = new.model_copy(update={"id": "lan1"})
-    _transaction(lambda data: _save_segment(data, new))
+    _transaction(lambda data: _update_with_renumber(data, "lan1", new))
     return status()
 
 
 def update_segment(seg_id: str, new: LanConfig) -> list[SegmentStatus]:
     get_segment(seg_id)
     new = new.model_copy(update={"id": seg_id})
-    _transaction(lambda data: _save_segment(data, new))
+    _transaction(lambda data: _update_with_renumber(data, seg_id, new))
     return segments_status()
 
 
