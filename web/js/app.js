@@ -624,17 +624,59 @@ let zoneFormFor = null;
 const DNS_TYPES = ["A", "AAAA", "CNAME", "MX", "TXT", "SRV", "PTR", "NS", "CAA"];
 const SOURCE = { dhcp: "DHCP", "static-lease": "закреплённый адрес", router: "роутер", ptr: "PTR по A-записи" };
 
-function recordRow(r = {}) {
-  const types = DNS_TYPES.map((t) => `<option ${t === (r.type || "A") ? "selected" : ""}>${t}</option>`).join("");
-  return `<tr data-row="rec"><td>${inp("name", r.name, 'size="12" placeholder="www"')}</td>
-    <td><select name="type">${types}</select></td>
-    <td>${inp("value", r.value, 'size="22" placeholder="192.168.88.20"')}</td>
-    <td>${inp("priority", r.priority, 'type="number" min="0" class="narrow"')}</td>
-    <td>${inp("weight", r.weight, 'type="number" min="0" class="narrow"')}</td>
-    <td>${inp("port", r.port, 'type="number" min="0" max="65535" class="narrow"')}</td>
-    <td>${inp("ttl", r.ttl, 'type="number" min="0" class="narrow"')}</td>
-    <td>${inp("comment", r.comment, 'size="14"')}</td>
-    <td><button type="button" class="danger" data-del-row>×</button></td></tr>`;
+const zoneOf = () => dnsData?.config.zones.find((z) => z.name === dnsZone);
+let recEdit = null;             // индекс редактируемой своей записи; null — новая
+
+function recValue(r) {
+  if (r.type === "MX") return `${r.priority ?? ""} ${r.value}`;
+  if (r.type === "SRV") return `${r.priority ?? ""} ${r.weight ?? ""} ${r.port ?? ""} ${r.value}`;
+  return r.value;
+}
+
+function renderZoneNames() {
+  const z = zoneOf();
+  $("#zone-rec-box").hidden = !z;
+  if (!z) {
+    $("#zone-names").innerHTML = '<tr><td colspan="6" class="hint">сначала сохраните зону</td></tr>';
+    return;
+  }
+  const act = (html) => `<td class="actions">${html}</td>`;
+  const own = z.records.map((r, i) => `<tr><td>${esc(r.name)}</td><td>${esc(r.type)}</td><td>${esc(recValue(r))}</td>
+    <td>вручную</td><td>${esc(r.comment || "")}</td>
+    ${act(`<button type="button" class="link" data-rec-edit="${i}">изменить</button>
+           <button type="button" class="danger" data-rec-del="${i}" title="удалить">×</button>`)}</tr>`);
+  const auto = dnsData.auto_names.filter((a) => a.zone === dnsZone).map((a) => `<tr><td>${esc(a.name)}</td>
+    <td>${esc(a.type)}</td><td>${esc(a.value)}</td><td>${esc(SOURCE[a.source] || a.source)}</td><td></td>
+    ${act(a.name === "ns" && a.source === "router" ? '<span class="hint">нужно зоне</span>'
+      : `<button type="button" class="danger" data-hide="${esc(a.name)}" title="скрыть">×</button>`)}</tr>`);
+  const hidden = (z.hidden || []).map((n) => `<tr class="muted"><td>${esc(n)}</td><td></td><td>скрыто — в зону не попадает</td>
+    <td></td><td></td>${act(`<button type="button" class="link" data-unhide="${esc(n)}">вернуть</button>`)}</tr>`);
+  $("#zone-names").innerHTML = [...own, ...auto, ...hidden].join("") || '<tr><td colspan="6" class="hint">нет</td></tr>';
+}
+
+function recTypeChanged() {
+  const t = $("#zone-rec-box [name=rec_type]").value;
+  const show = { priority: t === "MX" || t === "SRV", weight: t === "SRV", port: t === "SRV" };
+  for (const [k, on] of Object.entries(show)) $(`#zone-rec-box [data-rec=${k}]`).hidden = !on;
+}
+
+function recFormFill(r = null, idx = null) {
+  const b = $("#zone-rec-box");
+  recEdit = idx;
+  for (const k of ["name", "value", "priority", "weight", "port", "ttl", "comment"]) b.querySelector(`[name=rec_${k}]`).value = r?.[k] ?? "";
+  b.querySelector("[name=rec_type]").value = r?.type || "A";
+  recTypeChanged();
+  $("#zone-rec-title").textContent = r ? I18N.t("Изменить запись {name}", { name: r.name }) : "Новая запись";
+  $("#zone-rec-save").textContent = r ? "Сохранить" : "Добавить";
+  $("#zone-rec-cancel").hidden = !r;
+  $("#zone-rec-error").textContent = "";
+}
+
+async function saveZoneNames(records, hidden, ok, err) {
+  const zones = dnsData.config.zones.map((z) => (z.name === dnsZone ? { ...z, records, hidden } : z));
+  const d = await saveDns({ ...dnsData.config, zones }, ok, err);
+  if (d) renderZoneNames();
+  return d;
 }
 
 function fillDnsForm(c) {
@@ -665,7 +707,9 @@ function fillZoneForm() {
     : info?.reverse ? "Обратная зона: адрес → имя (PTR)."
     : segs ? I18N.t("Домен сегментов: {s}. Имена их устройств из DHCP попадают сюда.", { s: segs })
     : "Ни один сегмент LAN не использует этот домен.";
-  $("#zone-records").innerHTML = z.records.map(recordRow).join("");
+  renderZoneNames();
+  recFormFill();
+  $("#zone-rec-ok").textContent = "";
   $("#zone-delete").hidden = isNew;
   zoneFormFor = dnsZone;
 }
@@ -685,11 +729,9 @@ async function loadDns() {
   $("#dn-error").textContent = d.error || "";
   $("#zone-tabs").innerHTML = d.zones.map((z) => `<a class="tab ${z.name === dnsZone ? "active" : ""}" data-zone="${esc(z.name)}">${esc(z.name)}</a>`).join("")
     + `<a class="tab ${dnsZone === "new" ? "active" : ""}" data-zone="new">+ Зона</a>`;
-  const auto = d.auto_names.filter((a) => a.zone === dnsZone);
-  $("#zone-auto").innerHTML = auto.map((a) => `<tr><td>${esc(a.name)}</td><td>${esc(a.type)}</td><td>${esc(a.value)}</td>
-    <td>${esc(SOURCE[a.source] || a.source)}</td></tr>`).join("") || '<tr><td colspan="4" class="hint">нет</td></tr>';
   if (!dnsFormLoaded) fillDnsForm(c);
   if (zoneFormFor !== dnsZone) fillZoneForm();
+  else renderZoneNames();
 }
 
 $("#zone-tabs").addEventListener("click", (ev) => {
@@ -700,8 +742,49 @@ $("#zone-tabs").addEventListener("click", (ev) => {
   loadDns().catch(console.error);
 });
 
-$("#zone-record-add").addEventListener("click", () => $("#zone-records").insertAdjacentHTML("beforeend", recordRow()));
-$("#zone-records").addEventListener("click", (ev) => { const b = ev.target.closest("[data-del-row]"); if (b) b.closest("tr").remove(); });
+$("#zone-rec-box [name=rec_type]").innerHTML = DNS_TYPES.map((t) => `<option>${t}</option>`).join("");
+$("#zone-rec-box [name=rec_type]").addEventListener("change", recTypeChanged);
+$("#zone-rec-cancel").addEventListener("click", () => recFormFill());
+$("#zone-rec-box").addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter" && ev.target.tagName === "INPUT") { ev.preventDefault(); $("#zone-rec-save").click(); }
+});
+
+$("#zone-rec-save").addEventListener("click", async () => {
+  const b = $("#zone-rec-box"), v = (k) => b.querySelector(`[name=rec_${k}]`).value.trim();
+  const err = $("#zone-rec-error"), ok = $("#zone-rec-ok");
+  err.textContent = ""; ok.textContent = "";
+  const t = v("type");
+  const rec = { name: v("name"), type: t, value: v("value"),
+    priority: t === "MX" || t === "SRV" ? num(v("priority")) : null,
+    weight: t === "SRV" ? num(v("weight")) : null, port: t === "SRV" ? num(v("port")) : null,
+    ttl: num(v("ttl")), comment: opt(v("comment")) };
+  if (!rec.name || !rec.value) { err.textContent = I18N.t("укажите имя и значение"); return; }
+  const z = zoneOf();
+  const records = [...z.records];
+  if (recEdit != null) records[recEdit] = rec; else records.push(rec);
+  const hidden = (z.hidden || []).filter((n) => n !== rec.name.toLowerCase());
+  if (await saveZoneNames(records, hidden, ok, err)) recFormFill();
+});
+
+$("#zone-names").addEventListener("click", async (ev) => {
+  const b = ev.target.closest("button");
+  if (!b) return;
+  const z = zoneOf();
+  const err = $("#zone-rec-error"), ok = $("#zone-rec-ok");
+  if (b.dataset.recEdit != null) {
+    const i = Number(b.dataset.recEdit);
+    recFormFill(z.records[i], i);
+    $("#zone-rec-box").scrollIntoView({ block: "nearest" });
+  } else if (b.dataset.recDel != null) {
+    const i = Number(b.dataset.recDel);
+    if (!confirm(I18N.t("Удалить запись {name}?", { name: z.records[i].name }))) return;
+    if (await saveZoneNames(z.records.filter((_, j) => j !== i), z.hidden || [], ok, err) && recEdit != null) recFormFill();
+  } else if (b.dataset.hide != null) {
+    await saveZoneNames(z.records, [...(z.hidden || []), b.dataset.hide], ok, err);
+  } else if (b.dataset.unhide != null) {
+    await saveZoneNames(z.records, (z.hidden || []).filter((n) => n !== b.dataset.unhide), ok, err);
+  }
+});
 
 async function saveDns(config, okBox, errBox) {
   errBox.textContent = ""; okBox.textContent = "";
@@ -740,14 +823,9 @@ $("#zone-form").addEventListener("submit", async (ev) => {
     name = reverseName(f.reverse_net.value);
     if (!name) { err.textContent = I18N.t("обратная зона строится для сети /8, /16 или /24"); return; }
   }
-  const val = (r, k) => r.querySelector(`[name=${k}]`).value;
   if (!name) { err.textContent = I18N.t("укажите имя зоны или сеть для обратной зоны"); return; }
   const zone = { name, ttl: num(f.zone_ttl.value) ?? 3600, dhcp_names: f.dhcp_names.checked, auto_ptr: f.auto_ptr.checked,
-    records: [...$("#zone-records").querySelectorAll("[data-row]")].map((r) => ({
-      name: val(r, "name").trim(), type: val(r, "type"), value: val(r, "value").trim(),
-      priority: num(val(r, "priority")), weight: num(val(r, "weight")), port: num(val(r, "port")),
-      ttl: num(val(r, "ttl")), comment: opt(val(r, "comment")),
-    })).filter((r) => r.name && r.value) };
+    records: zoneOf()?.records || [], hidden: zoneOf()?.hidden || [] };
   const zones = dnsZone === "new" ? [...dnsData.config.zones, zone]
     : dnsData.config.zones.map((z) => (z.name === dnsZone ? zone : z));
   if (await saveDns({ ...dnsData.config, zones }, ok, err)) {

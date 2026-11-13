@@ -132,6 +132,22 @@ class DnsZone(BaseModel):
     dhcp_names: bool = Field(True, description="Добавлять имена устройств из DHCP (сегменты с этим доменом)")
     auto_ptr: bool = Field(True, description="Обратная зона: PTR для всех A-записей из её сети")
     records: list[DnsRecord] = Field(default_factory=list)
+    hidden: list[str] = Field(default_factory=list,
+                              description="Автоматические имена (DHCP, router), которые в зону не добавлять")
+
+    @field_validator("hidden")
+    @classmethod
+    def _hidden(cls, v: list[str]) -> list[str]:
+        out = []
+        for n in v:
+            n = n.strip().lower().rstrip(".")
+            if not n or not re.fullmatch(r"[a-z0-9_.-]{1,253}", n):
+                raise ValueError(f"скрытое имя '{n}': буквы, цифры, - _ .")
+            if n == "ns":
+                raise ValueError("ns — имя DNS-сервера зоны (запись NS), его скрыть нельзя")
+            if n not in out:
+                out.append(n)
+        return out
 
     @field_validator("name")
     @classmethod
