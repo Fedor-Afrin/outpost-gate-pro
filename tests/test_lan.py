@@ -254,3 +254,57 @@ def test_dhcp_settings_without_rebuild(env):
         lan.update_dhcp("lan1", DhcpSettings(pool_start="10.0.0.1", pool_end="10.0.0.9"))
     with pytest.raises(lan.LanError):
         lan.update_dhcp("lan7", DhcpSettings())
+
+
+# --- VLAN ----------------------------------------------------------------------------------------
+def _vlan_kernel(kernel, monkeypatch):
+    created = []
+
+    def vlan_create(name, parent, vid):
+        assert parent in kernel.links
+        kernel.links.add(name)
+        created.append((name, parent, vid))
+    monkeypatch.setattr(netlink, "vlan_create", vlan_create)
+    return created
+
+
+def test_segment_on_vlan_trunk(env, monkeypatch):
+    store, kernel, calls = env
+    kernel.links |= {"eth2"}
+    created = _vlan_kernel(kernel, monkeypatch)
+    lan.update(LanConfig(enabled=True))                                    # eth0, eth2 — без тега
+    lan.add_segment(LanConfig(enabled=True, name="Phones", address="10.30.0.1/24", vlan_id=30,
+                              trunk_ports=["eth2"]))
+    assert created == [("eth2.30", "eth2", 30)]
+    assert kernel.master["eth2.30"] == "br-lan2" and kernel.master["eth2"] == "br-lan"   # native + tagged
+    assert store.load()["lans"][0]["vlan"] == {"id": 30, "trunk-ports": ["eth2"]}
+    st = lan.status()
+    eth2 = next(p for p in st.ports if p.name == "eth2")
+    assert eth2.segment == "lan1" and eth2.vlans == ["30 (Phones)"]
+    assert "eth2.30" not in {p.name for p in st.ports}                     # VLAN-интерфейс — не порт
+    # повторная сборка и удаление: VLAN-интерфейс убирается
+    lan.delete_segment("lan2")
+    assert "eth2.30" not in kernel.links
+    # одинаковый VLAN у двух сегментов — нельзя
+    lan.add_segment(LanConfig(enabled=True, address="10.30.0.1/24", vlan_id=30, trunk_ports=["eth2"]))
+    with pytest.raises(lan.LanError, match="VLAN 30 уже"):
+        lan.add_segment(LanConfig(enabled=True, address="10.40.0.1/24", vlan_id=30, trunk_ports=["eth0"]))
+
+
+def test_wan_on_provider_vlan(env, monkeypatch):
+    store, kernel, calls = env
+    created = _vlan_kernel(kernel, monkeypatch)
+    from app.models.wan import WanConfig
+    monkeypatch.setattr(wan, "write_upstream_dns", lambda dns: None)
+    monkeypatch.setattr(netlink, "route_add", lambda *a, **k: None)
+    monkeypatch.setattr(netlink, "route_del", lambda *a, **k: None)
+    wan.apply(WanConfig(interface="eth1", mode="static", address="203.0.113.2/24", gateway="203.0.113.1", vlan_id=100))
+    assert created == [("eth1.100", "eth1", 100)] and ("eth1.100", "203.0.113.2/24") in kernel.addrs
+    st = wan.load_state()
+    assert st["interface"] == "eth1.100" and st["base"] == "eth1"
+    assert "eth1.100" not in wan.candidates()
+    assert lan.wan_interface() == "eth1.100" and set(lan._wan_ports()) == {"eth1.100", "eth1"}
+    assert "eth1" not in lan.lan_ports(LanConfig(enabled=True), "eth1.100")   # физический WAN не уходит в LAN
+    wan.cleanup(wan.load_state())
+    assert "eth1.100" not in kernel.links
+    assert WanConfig(interface="eth1", mode="dhcp", vlan_id=100).to_yaml()["vlan_id"] == 100

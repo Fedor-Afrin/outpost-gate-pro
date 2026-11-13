@@ -800,6 +800,25 @@ window.I18N_DICT = {
   "этот раздел уже подключён": ["this partition is already attached", "המחיצה הזו כבר מחוברת"],
   "диск с именем {n} уже есть": ["a disk named {n} already exists", "דיסק בשם {n} כבר קיים"],
 
+  // ------------------------------------------------------------ VLAN — OutpostGate Pro
+  "VLAN (с тегом)": ["VLAN (tagged)", "VLAN (מתויג)"],
+  "VLAN провайдера": ["Provider VLAN", "VLAN של הספק"],
+  "без VLAN": ["no VLAN", "ללא VLAN"],
+  "Заполняйте, только если провайдер требует тег 802.1Q (например, VLAN 100 на оптическом терминале). Роутер создаст интерфейс вида eth0.100.":
+    ["Fill in only if the provider requires an 802.1Q tag (for example, VLAN 100 on a fiber terminal). The router will create an interface like eth0.100.",
+     "מלאו רק אם הספק דורש תג 802.1Q (לדוגמה, VLAN 100 במסוף סיב אופטי). הנתב ייצור ממשק בסגנון eth0.100."],
+  "VLAN (802.1Q)": ["VLAN (802.1Q)", "VLAN ‏(802.1Q)"],
+  "VLAN ID": ["VLAN ID", "VLAN ID"],
+  "Порты с тегом (trunk)": ["Tagged ports (trunk)", "פורטים מתויגים (trunk)"],
+  "нет портов": ["no ports", "אין פורטים"],
+  "Сегмент придёт на отмеченные порты с тегом VLAN — к ним подключается управляемый коммутатор или точка доступа. Тот же порт может одновременно нести основной LAN без тега (native VLAN). Один порт и несколько VLAN — так делается «роутер на палочке».":
+    ["The segment arrives on the ticked ports with a VLAN tag — connect a managed switch or access point there. The same port can also carry the main LAN untagged (native VLAN). One port with several VLANs is a “router on a stick”.",
+     "המקטע יגיע לפורטים המסומנים עם תג VLAN — אליהם מחברים מתג מנוהל או נקודת גישה. אותו פורט יכול לשאת במקביל את ה-LAN הראשי ללא תג (native VLAN). פורט אחד עם כמה VLAN — זה „נתב על מקל”."],
+  "VLAN {v} уже у сегмента {s}": ["VLAN {v} is already used by segment {s}", "VLAN {v} כבר בשימוש המקטע {s}"],
+  "VLAN {v} на {p} уже занят WAN": ["VLAN {v} on {p} is already used by WAN", "VLAN {v} על {p} כבר תפוס על ידי WAN"],
+  "{n}: для тегированных портов укажите VLAN ID": ["{n}: specify a VLAN ID for tagged ports", "{n}: ציינו VLAN ID לפורטים מתויגים"],
+  "не удалось создать VLAN {v} на {p}: {e}": ["could not create VLAN {v} on {p}: {e}", "לא ניתן ליצור VLAN {v} על {p}: {e}"],
+
   // ------------------------------------------------------------ сообщения сервера (ошибки)
   "нужен вход": ["sign-in required", "נדרשת כניסה"],
   "сначала смените пароль": ["change your password first", "החליפו קודם את הסיסמה"],
