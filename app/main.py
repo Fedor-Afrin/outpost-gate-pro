@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.agent import apply as agent
 from app.api.routes import auth as auth_routes
-from app.api.routes import firewall, interfaces, ip_addresses, ip_routes, lan, routing, status, system, tools, vpn, wan
+from app.api.routes import dhcp, dns, firewall, interfaces, ip_addresses, ip_routes, lan, routing, status, system, tools, vpn, wan
 from app.core import auth
 from app.core.config import settings
 from app.services import ssh_server
@@ -33,7 +33,7 @@ async def lifespan(_: FastAPI):
         ssh.close()
     routing_svc.stop()
     vpn_svc.stop_all()
-    lan_svc.stop_dnsmasq()
+    lan_svc.stop_services()        # Kea и BIND
     wan_svc.stop_dhcp()   # корректно отпустить аренду при остановке
 
 
@@ -72,6 +72,8 @@ app.include_router(status.router, prefix="/api/status", tags=["Status"])
 app.include_router(system.router, prefix="/api/system", tags=["System"])
 app.include_router(wan.router, prefix="/api/wan", tags=["WAN"])
 app.include_router(lan.router, prefix="/api/lan", tags=["LAN"])
+app.include_router(dhcp.router, prefix="/api/dhcp", tags=["DHCP"])
+app.include_router(dns.router, prefix="/api/dns", tags=["DNS"])
 app.include_router(vpn.router, prefix="/api/vpn", tags=["VPN"])
 app.include_router(firewall.router, prefix="/api/firewall", tags=["Firewall"])
 app.include_router(routing.router, prefix="/api/routing", tags=["Routing"])

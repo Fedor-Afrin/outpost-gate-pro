@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>OutpostGate Pro</title>
-  <link rel="stylesheet" href="css/style.css?v=0.12.0">
+  <link rel="stylesheet" href="css/style.css?v=0.13.0">
 </head>
 <body>
   <!-- вход -->
@@ -41,6 +41,8 @@
       <a href="#status" data-page="status">Status</a>
       <a href="#wan" data-page="wan">WAN</a>
       <a href="#lan" data-page="lan">LAN</a>
+      <a href="#dhcp" data-page="dhcp">DHCP</a>
+      <a href="#dns" data-page="dns">DNS</a>
       <a href="#vpn" data-page="vpn">VPN</a>
       <a href="#firewall" data-page="firewall">Firewall</a>
       <a href="#routing" data-page="routing">Routing</a>
@@ -127,64 +129,124 @@
       </form>
     </section>
 
-    <!-- LAN -->
+    <!-- LAN: сегменты -->
     <section id="page-lan" class="page">
       <h1>LAN</h1>
+      <div class="tabs" id="lan-tabs"></div>
 
       <div class="card">
         <div class="status-grid">
           <div><span class="label">Состояние</span><span id="ls-state">—</span></div>
-          <div><span class="label">DHCP и DNS</span><span id="ls-dns">—</span></div>
           <div><span class="label">Мост</span><span id="ls-bridge">—</span></div>
           <div><span class="label">Адрес роутера</span><span id="ls-addr">—</span></div>
+          <div><span class="label">Клиенты DHCP</span><span id="ls-clients">—</span></div>
         </div>
         <table class="compact">
-          <thead><tr><th>Порт</th><th>Роль</th><th>Линк</th><th>MAC</th></tr></thead>
+          <thead><tr><th>Порт</th><th>Роль</th><th>Сегмент</th><th>Линк</th><th>MAC</th></tr></thead>
           <tbody id="lan-ports"></tbody>
         </table>
       </div>
 
       <form id="lan-form" class="card form">
-        <h2>Настройки</h2>
-        <label class="check"><input type="checkbox" name="enabled"> Включить LAN (мост, DHCP, DNS, NAT)</label>
+        <h2 id="lan-form-title">Настройки</h2>
+        <label class="check"><input type="checkbox" name="enabled"> Включить сегмент (мост, DHCP, DNS, NAT)</label>
+        <label class="row">Имя сегмента <input name="name" maxlength="32" required></label>
         <label class="row">IP-адрес роутера / маска <input name="address" placeholder="192.168.88.1/24" required></label>
 
         <div class="row-block">
-          <span>Порты LAN</span>
-          <label class="check"><input type="checkbox" name="ports_auto"> Все порты, кроме WAN</label>
+          <span>Порты</span>
+          <label class="check" id="lan-auto-label"><input type="checkbox" name="ports_auto"> Все свободные порты, кроме WAN</label>
           <div id="lan-port-list" class="port-list"></div>
         </div>
 
-        <h2>DHCP-сервер</h2>
-        <label class="check"><input type="checkbox" name="dhcp_enabled"> Раздавать адреса</label>
-        <label class="row">Начало диапазона <input name="pool_start" placeholder="192.168.88.10"></label>
-        <label class="row">Конец диапазона <input name="pool_end" placeholder="192.168.88.254"></label>
-        <label class="row">Срок аренды
-          <select name="lease_time">
-            <option value="1h">1 час</option><option value="12h">12 часов</option>
-            <option value="1d">1 день</option><option value="7d">7 дней</option>
-          </select>
-        </label>
-        <p class="hint">Клиенты получают роутер как шлюз и DNS. DNS-запросы роутер пересылает серверам WAN.</p>
+        <h2>DNS и домен</h2>
+        <label class="check"><input type="checkbox" name="dns_enabled"> Роутер — DNS-сервер для этого сегмента</label>
+        <label class="row">Домен <input name="domain" list="lan-domains" placeholder="office.lan"></label>
+        <datalist id="lan-domains"></datalist>
+        <p class="hint">Имена устройств из DHCP попадают в зону этого домена: laptop.office.lan. Два сегмента могут делить один домен или иметь свои. Зоны — во вкладке DNS.</p>
 
-        <h2>Безопасность</h2>
-        <label class="check"><input type="checkbox" name="wan_management"> Разрешить управление со стороны WAN (веб и SSH)</label>
-        <p class="hint">Остальные входящие соединения с WAN закрыты всегда. Выключайте, когда роутер настроен и управляется из LAN или через VPN.</p>
+        <h2>Маршрутизация между сегментами</h2>
+        <p class="hint">По умолчанию сегменты изолированы друг от друга. Отметьте, куда устройствам этого сегмента можно обращаться — ответы проходят сами.</p>
+        <div id="lan-forward" class="port-list"></div>
+
+        <div id="lan-wan-block">
+          <h2>Безопасность</h2>
+          <label class="check"><input type="checkbox" name="wan_management"> Разрешить управление со стороны WAN (веб и SSH)</label>
+          <p class="hint">Остальные входящие соединения с WAN закрыты всегда. Выключайте, когда роутер настроен и управляется из LAN или через VPN.</p>
+        </div>
 
         <div class="toolbar">
           <button type="submit">Применить</button>
+          <button type="button" id="lan-delete" class="danger" hidden>Удалить сегмент</button>
           <span id="lan-error" class="error"></span>
           <span id="lan-ok" class="ok"></span>
         </div>
       </form>
+    </section>
 
-      <div class="card wide">
-        <h2>Устройства (DHCP-аренды)</h2>
-        <table class="compact">
-          <thead><tr><th>Имя</th><th>IP</th><th>MAC</th><th>Производитель</th><th>Аренда до</th><th></th></tr></thead>
-          <tbody id="lan-leases"></tbody>
-        </table>
+    <!-- DHCP (Kea) -->
+    <section id="page-dhcp" class="page">
+      <h1>DHCP</h1>
+      <div class="tabs" id="dhcp-tabs"></div>
+
+      <div class="card">
+        <div class="status-grid">
+          <div><span class="label">Kea DHCP</span><span id="dh-state">—</span></div>
+          <div><span class="label">Сеть</span><span id="dh-net">—</span></div>
+          <div><span class="label">Домен</span><span id="dh-domain">—</span></div>
+          <div><span class="label">DNS для клиентов</span><span id="dh-dns">—</span></div>
+        </div>
+        <span id="dh-error" class="error"></span>
       </div>
+
+      <form id="dhcp-form" class="card form wide">
+        <h2>Раздача адресов</h2>
+        <label class="check"><input type="checkbox" name="dhcp_enabled"> Раздавать адреса в этом сегменте</label>
+        <label class="row">Начало диапазона <input name="pool_start" placeholder="192.168.88.10"></label>
+        <label class="row">Конец диапазона <input name="pool_end" placeholder="192.168.88.254"></label>
+        <label class="row">Срок аренды
+          <select name="lease_time">
+            <option value="10m">10 минут</option><option value="1h">1 час</option><option value="12h">12 часов</option>
+            <option value="1d">1 день</option><option value="7d">7 дней</option>
+          </select>
+        </label>
+        <p class="hint">Без DHCP устройства этого сегмента настраиваются вручную.</p>
+
+        <h2>Основные опции</h2>
+        <label class="row wide-row">DNS-серверы (6) <input name="dns_servers" placeholder="пусто — роутер"></label>
+        <label class="row wide-row">Суффиксы поиска (119) <input name="domain_search" placeholder="пусто — домен сегмента"></label>
+        <label class="row wide-row">NTP-серверы (42) <input name="ntp_servers" placeholder="192.168.88.1"></label>
+        <label class="row">Смещение времени, с (2) <input name="time_offset" type="number" placeholder="7200"></label>
+        <label class="row">MTU (26) <input name="mtu" type="number" min="576" max="9000" placeholder="1500"></label>
+        <label class="row wide-row">WINS-серверы (44) <input name="wins_servers"></label>
+
+        <h2>IP-телефоны и загрузка по сети</h2>
+        <label class="row wide-row">TFTP-сервер (66) <input name="tftp_server" placeholder="192.168.88.5 или http://pbx/prov"></label>
+        <label class="row wide-row">Файл загрузки (67) <input name="boot_file" placeholder="pxelinux.0"></label>
+        <label class="row wide-row">TFTP-серверы Cisco (150) <input name="tftp_servers_150" placeholder="192.168.88.5"></label>
+        <label class="row wide-row">SIP-серверы (120) <input name="sip_servers" placeholder="192.168.88.5"></label>
+        <label class="row wide-row">URL автонастройки (160) <input name="provisioning_url" placeholder="http://pbx.office.lan/prov"></label>
+        <p class="hint">Grandstream, Yealink и Fanvil берут сервер автонастройки из опции 66 (можно URL), Cisco — из 150, Polycom — из 160.</p>
+
+        <h2>Маршруты и прочее</h2>
+        <label class="row wide-row">Статические маршруты (121/249) <input name="static_routes" placeholder="10.0.0.0/8 via 192.168.88.254"></label>
+        <label class="row wide-row">Автонастройка прокси, WPAD (252) <input name="wpad_url" placeholder="http://proxy/wpad.dat"></label>
+        <label class="row wide-row">Vendor-specific (43), hex <input name="vendor_43" placeholder="01:04:c0:a8:58:05"></label>
+        <p class="hint">Списки — через запятую. Маршруты получают клиенты, которым не хватает маршрута по умолчанию (например, в сеть центра через другой роутер).</p>
+
+        <h3>Свои опции</h3>
+        <table class="compact edit-table">
+          <thead><tr><th>Код</th><th>Тип</th><th>Значение</th><th>Комментарий</th><th></th></tr></thead>
+          <tbody id="dhcp-custom"></tbody>
+        </table>
+        <button type="button" class="link" id="dhcp-custom-add">+ Добавить опцию</button>
+
+        <div class="toolbar">
+          <button type="submit">Применить</button>
+          <span id="dhcp-form-error" class="error"></span>
+          <span id="dhcp-form-ok" class="ok"></span>
+        </div>
+      </form>
 
       <div class="card wide" id="static-card">
         <h2>Закреплённые адреса</h2>
@@ -201,6 +263,77 @@
           <thead><tr><th>Имя</th><th>IP</th><th>MAC</th><th>Примечание</th><th></th></tr></thead>
           <tbody id="static-leases"></tbody>
         </table>
+      </div>
+
+      <div class="card wide">
+        <h2>Устройства (DHCP-аренды)</h2>
+        <table class="compact">
+          <thead><tr><th>Имя</th><th>IP</th><th>MAC</th><th>Производитель</th><th>Аренда до</th><th></th></tr></thead>
+          <tbody id="lan-leases"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- DNS (BIND 9) -->
+    <section id="page-dns" class="page">
+      <h1>DNS</h1>
+      <div class="card">
+        <div class="status-grid">
+          <div><span class="label">BIND 9</span><span id="dn-state">—</span></div>
+          <div><span class="label">Отвечает на</span><span id="dn-listen">—</span></div>
+          <div><span class="label">Forwarders</span><span id="dn-fwd">—</span></div>
+          <div><span class="label">Зоны</span><span id="dn-zcount">—</span></div>
+        </div>
+        <span id="dn-error" class="error"></span>
+      </div>
+
+      <form id="dns-form" class="card form">
+        <h2>Сервер</h2>
+        <label class="row wide-row">Вышестоящие DNS (forwarders) <input name="forwarders" placeholder="пусто — DNS провайдера"></label>
+        <label class="check"><input type="checkbox" name="forward_only"> Только через forwarders (не обращаться к корневым серверам)</label>
+        <label class="check"><input type="checkbox" name="dnssec"> Проверять DNSSEC</label>
+        <label class="row">Кэш, МБ <input name="cache_mb" type="number" min="8" max="2048"></label>
+        <label class="row wide-row">Кто ещё может спрашивать <input name="allow" placeholder="10.8.0.0/24 — например, сеть VPN"></label>
+        <p class="hint">Сетям всех сегментов LAN доступ открыт всегда. DNS на каждом сегменте включается во вкладке LAN.</p>
+        <div class="toolbar">
+          <button type="submit">Применить</button>
+          <span class="error dns-form-error"></span>
+          <span class="ok dns-form-ok"></span>
+        </div>
+      </form>
+
+      <div class="card wide">
+        <h2>Зоны</h2>
+        <div class="tabs" id="zone-tabs"></div>
+        <form id="zone-form" class="form">
+          <label class="row">Имя зоны <input name="zone_name" placeholder="office.lan"></label>
+          <label class="row" id="zone-rev-label">или обратная зона для сети <input name="reverse_net" placeholder="192.168.88.0/24"></label>
+          <label class="row">TTL по умолчанию, с <input name="zone_ttl" type="number" min="60" max="604800"></label>
+          <label class="check"><input type="checkbox" name="dhcp_names"> Добавлять имена устройств из DHCP</label>
+          <label class="check"><input type="checkbox" name="auto_ptr"> Обратная зона: PTR для A-записей автоматически</label>
+          <p class="hint" id="zone-hint"></p>
+
+          <h3>Записи</h3>
+          <div class="table-scroll"><table class="compact edit-table">
+            <thead><tr><th>Имя</th><th>Тип</th><th>Значение</th><th>Приоритет</th><th>Вес</th><th>Порт</th><th>TTL</th><th>Комментарий</th><th></th></tr></thead>
+            <tbody id="zone-records"></tbody>
+          </table></div>
+          <button type="button" class="link" id="zone-record-add">+ Добавить запись</button>
+          <p class="hint">Имя: @ — сама зона, www — www.office.lan, полное имя — с точкой на конце. Для MX и SRV заполните приоритет, для SRV — вес и порт.</p>
+
+          <h3>Добавлены автоматически</h3>
+          <table class="compact">
+            <thead><tr><th>Имя</th><th>Тип</th><th>Значение</th><th>Источник</th></tr></thead>
+            <tbody id="zone-auto"></tbody>
+          </table>
+
+          <div class="toolbar">
+            <button type="submit">Сохранить зону</button>
+            <button type="button" id="zone-delete" class="danger">Удалить зону</button>
+            <span class="error zone-error"></span>
+            <span class="ok zone-ok"></span>
+          </div>
+        </form>
       </div>
     </section>
 
@@ -676,8 +809,8 @@
 
   </main>
 
-  <script src="js/i18n-dict.js?v=0.12.0"></script>
-  <script src="js/i18n.js?v=0.12.0"></script>
-  <script src="js/app.js?v=0.12.0"></script>
+  <script src="js/i18n-dict.js?v=0.13.0"></script>
+  <script src="js/i18n.js?v=0.13.0"></script>
+  <script src="js/app.js?v=0.13.0"></script>
 </body>
 </html>
