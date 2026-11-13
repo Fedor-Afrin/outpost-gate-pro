@@ -128,6 +128,10 @@ def prometheus_text(snap: dict, ident: str, version: str) -> str:
 
     w = snap.get("wan") or {}
     m.add("og_wan_up", "gauge", "WAN link is up", bool(w.get("up")), {"interface": w.get("interface")})
+    for x in snap.get("wans") or []:
+        lb = {"wan": x["id"], "interface": x["interface"]}
+        m.add("og_wan_healthy", "gauge", "Multi-WAN: connectivity check passes", None if x["healthy"] is None else bool(x["healthy"]), lb)
+        m.add("og_wan_active", "gauge", "Multi-WAN: traffic goes through this WAN", bool(x["active"]), lb)
     for p in snap.get("ping") or []:
         lb = {"target": p["target"], "name": p["name"]}
         m.add("og_ping_rtt_seconds", "gauge", "Average ping round-trip time", None if p["rtt"] is None else round(p["rtt"] / 1000, 6), lb)

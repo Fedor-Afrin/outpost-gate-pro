@@ -13,9 +13,10 @@ router.yaml — единый источник правды (аналог /export
      затем фаервол ещё раз (пропустить OSPF/BGP) и AllowedIPs туннеля (multicast OSPF)
   8. файловый сервер Samba — диски (автомонтирование), учётки, общие папки
   9. экспорт мониторинга: snmpd, Zabbix agent (сбор метрик запускает main.py)
+ 10. NTP (chrony): время роутера и раздача в LAN
 Дальше: Status, Safe Mode.
 """
-from app.services import addresses, exporters, files, firewall, lan, routes, routing, sysctl, vpn, wan
+from app.services import addresses, exporters, files, firewall, lan, ntp, routes, routing, sysctl, vpn, wan
 
 
 def _step(name: str, fn) -> None:
@@ -43,3 +44,4 @@ def apply_startup() -> None:
         _step("VPN (OSPF multicast)", vpn.sync_allowed_ips)
     _step("файловый сервер", files.apply_startup)
     _step("мониторинг (SNMP, Zabbix)", exporters.apply_startup)
+    _step("NTP", ntp.apply_startup)

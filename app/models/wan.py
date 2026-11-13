@@ -79,7 +79,7 @@ class WanConfig(BaseModel):
 
 class WanStatus(BaseModel):
     """Что сейчас происходит на WAN."""
-    config: WanConfig
+    config: "Wan2Config | WanConfig"
     interface: str | None          # фактический интерфейс (auto уже разрешён)
     mac: str | None = None
     link_up: bool = False          # есть ли линк (кабель)
@@ -90,3 +90,80 @@ class WanStatus(BaseModel):
     dhcp_state: str | None = None  # bound / searching / static / none
     lease_expires: float | None = None  # unix time
     interfaces: list[str] = []     # кандидаты для выбора WAN
+    multi: bool = False            # включён второй WAN
+
+
+# --- второй WAN и мульти-WAN -----------------------------------------------------------------
+class Wan2Config(WanConfig):
+    """Второй провайдер (секция wan2: в router.yaml). Интерфейс задаётся явно."""
+    enabled: bool = False
+    interface: str = Field("", description="Порт второго провайдера, например eth2")
+    mode: Literal["dhcp", "static", "none"] = "dhcp"
+
+    @model_validator(mode="after")
+    def _need_interface(self):
+        self.interface = (self.interface or "").strip()
+        if self.enabled and (not self.interface or self.interface == "auto"):
+            raise ValueError("WAN2: выберите порт второго провайдера")
+        return self
+
+    def to_yaml(self) -> dict:
+        return {"enabled": self.enabled, **super().to_yaml()}
+
+
+class MultiWanConfig(BaseModel):
+    """Как работают два WAN (секция multiwan: в router.yaml)."""
+    mode: Literal["failover", "balance"] = Field(
+        "failover", description="failover — резерв; balance — оба канала сразу, соединения по весам")
+    primary: Literal["wan1", "wan2"] = Field("wan1", description="Основной канал в режиме резерва")
+    weight1: int = Field(1, ge=1, le=10, description="Вес WAN1 при балансировке")
+    weight2: int = Field(1, ge=1, le=10, description="Вес WAN2 при балансировке")
+    check_targets: list[str] = Field(default_factory=lambda: ["1.1.1.1", "8.8.8.8"],
+                                     description="Куда проверять связь через каждый канал (ping)")
+    interval: int = Field(5, ge=2, le=60, description="Секунд между проверками")
+    fail_after: int = Field(3, ge=1, le=20, description="Сколько проверок подряд без ответа — канал упал")
+    recover_after: int = Field(5, ge=1, le=60, description="Сколько удачных проверок подряд — канал вернулся")
+
+    @field_validator("check_targets")
+    @classmethod
+    def _targets(cls, v: list[str]) -> list[str]:
+        out = []
+        for x in v:
+            if x and x.strip():
+                ip = str(_ipv4(x, "адрес проверки"))
+                if ip not in out:
+                    out.append(ip)
+        if not out:
+            raise ValueError("укажите хотя бы один адрес для проверки связи")
+        if len(out) > 4:
+            raise ValueError("адресов проверки — не больше 4")
+        return out
+
+    def to_yaml(self) -> dict:
+        return self.model_dump()
+
+
+class WanHealth(BaseModel):
+    id: str                          # wan1 / wan2
+    name: str                        # WAN1 / WAN2
+    enabled: bool = True
+    interface: str | None = None
+    address: str | None = None
+    gateway: str | None = None
+    link_up: bool = False
+    healthy: bool | None = None      # None — ещё не проверяли / проверка не нужна
+    active: bool = False             # через него сейчас идёт трафик (в балансировке — все живые)
+    rtt: float | None = None         # мс, последняя удачная проверка
+    since: float | None = None       # когда сменилось состояние
+    fails: int = 0
+    oks: int = 0
+
+
+class MultiWanStatus(BaseModel):
+    config: MultiWanConfig
+    enabled: bool                    # второй WAN включён
+    wans: list[WanHealth]
+    events: list[dict] = Field(default_factory=list)   # последние переключения
+
+
+WanStatus.model_rebuild()

@@ -151,13 +151,17 @@ def validate_config(data) -> None:
     from app.models.dns import DnsConfig
     from app.models.files import FilesConfig
     from app.models.routing import RoutingConfig
-    from app.models.wan import WanConfig
+    from app.models.wan import MultiWanConfig, Wan2Config, WanConfig
+    from app.models.ntp import NtpConfig
     from app.models.wireguard import WgConfig
     from app.services import firewall_rules
     if not isinstance(data, dict):
         raise SysError(422, "это не конфигурация роутера (ожидается YAML-словарь)")
     try:
         WanConfig(**(data.get("wan") or {}))
+        Wan2Config(**(data.get("wan2") or {}))
+        MultiWanConfig.model_validate(data.get("multiwan") or {})
+        NtpConfig.model_validate(data.get("ntp") or {})
         LanConfig.from_yaml(data.get("lan"), data.get("firewall"))
         for s in (((data.get("lan") or {}).get("dhcp-server") or {}).get("static-leases") or []):
             StaticLease(**s)

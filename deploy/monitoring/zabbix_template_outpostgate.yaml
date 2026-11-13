@@ -106,6 +106,19 @@ zabbix_export:
         expression: last(/OutpostGate Pro by Zabbix agent/outpost.get[wan.up])=0
         name: 'OutpostGate: WAN link is down'
         priority: HIGH
+    - uuid: 0bc2c3c00c8e46ed8f04daa6a564ee6a
+      name: WAN2 connectivity (-1 = no WAN2)
+      key: outpost.get[wan2.healthy]
+      delay: 30s
+      value_type: FLOAT
+      tags:
+      - tag: component
+        value: wan
+      triggers:
+      - uuid: bb1867f4e5ff4d83ad93dc535e0ba00e
+        expression: last(/OutpostGate Pro by Zabbix agent/outpost.get[wan2.healthy])=0
+        name: 'OutpostGate: WAN2 (second ISP) is down'
+        priority: AVERAGE
     - uuid: 4b3c7cb7d1494c51a135f1fa7dc6311d
       name: DHCP active leases
       key: outpost.get[dhcp.leases]

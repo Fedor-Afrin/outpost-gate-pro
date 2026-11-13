@@ -25,8 +25,15 @@ def _system() -> dict:
 def _wan() -> dict:
     from app.services import wan
     w = wan.status()
-    return {"interface": w.interface, "link_up": w.link_up, "mode": w.config.mode, "state": w.dhcp_state,
-            "addresses": w.addresses, "gateway": w.gateway, "dns": w.dns}
+    out = {"interface": w.interface, "link_up": w.link_up, "mode": w.config.mode, "state": w.dhcp_state,
+           "addresses": w.addresses, "gateway": w.gateway, "dns": w.dns, "wans": []}
+    if wan.multi():
+        from app.services import multiwan
+        st = multiwan.status()
+        out["multi_mode"] = st.config.mode
+        out["wans"] = [{"name": x.name, "interface": x.interface, "address": x.address, "healthy": x.healthy,
+                        "active": x.active} for x in st.wans]
+    return out
 
 
 def _lan() -> dict:
@@ -68,6 +75,7 @@ def _firewall() -> dict:
 def _traffic() -> list[dict]:
     from app.services import interfaces, lan, wan
     wan_if = (wan.load_state().get("interface") or None)
+    wan_ifs = set(wan.active_interfaces()) if wan.multi() else {wan_if}
     segs = lan.segments()
     bridges = {x.bridge for x in segs}
     lan_ports = {p for x in segs for p in lan.load_state(x.id).get("ports", [])}
@@ -76,7 +84,7 @@ def _traffic() -> list[dict]:
     for i in interfaces.list_interfaces():
         if i.name == "lo":
             continue
-        role = ("wan" if i.name == wan_if else "lan" if i.name in bridges or i.name in lan_ports
+        role = ("wan" if i.name in wan_ifs else "lan" if i.name in bridges or i.name in lan_ports
                 else "vpn" if i.name in vpn_ifaces else "")
         out.append({"name": i.name, "role": role, "running": i.running,
                     "rx_bytes": i.rx_bytes, "tx_bytes": i.tx_bytes})

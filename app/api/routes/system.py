@@ -18,6 +18,8 @@
   POST /api/system/safe-mode/commit | /rollback
   GET  /api/system/audit?limit=           журнал действий
   POST /api/system/restart                перезапустить сервис роутера
+  GET  /api/system/ntp                    NTP: настройки, синхронизация, источники времени
+  PUT  /api/system/ntp                    сохранить и применить (chrony)
 """
 from datetime import datetime
 from typing import Literal
@@ -27,6 +29,8 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 
 from app.core import auth
+from app.models.ntp import NtpConfig, NtpStatus
+from app.services import ntp
 from app.services import system as svc
 
 router = APIRouter()
@@ -172,3 +176,16 @@ def audit(limit: int = 200):
 def restart():
     svc.restart_service()
     return {"ok": True, "message": "сервис перезапускается — страница обновится через несколько секунд"}
+
+
+@router.get("/ntp", response_model=NtpStatus)
+def get_ntp():
+    return ntp.status()
+
+
+@router.put("/ntp", response_model=NtpStatus)
+def put_ntp(data: NtpConfig):
+    try:
+        return ntp.update(data)
+    except ntp.NtpError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)

@@ -324,9 +324,15 @@ def topology() -> dict:
     from app.services import lan, wan
     st = wan.load_state()
     roles: dict[str, tuple[str, str]] = {}
+    multi = wan.multi()
     for name in (st.get("base"), st.get("interface")):
         if name:
-            roles[name] = ("wan", "WAN")
+            roles[name] = ("wan", "WAN1" if multi else "WAN")
+    if multi:
+        st2 = wan.load_state("wan2")
+        for name in (st2.get("base"), st2.get("interface"), wan.get_config("wan2").interface):
+            if name:
+                roles.setdefault(name, ("wan", "WAN2"))
     segs = []
     for s in lan.segments():
         segs.append(s)
@@ -448,10 +454,11 @@ class Collector:
 
         # связь
         from app.services import wan
-        gw = _safe(wan.current_gateway) if topo["wan"] else None
+        gws = _safe(wan_gateways, []) if topo["wan"] else []
+        gw = gws[0][1] if gws else None
         cfg = _safe(get_config)
-        targets = [("gateway", gw)] if gw else []
-        targets += [(t, t) for t in (cfg.ping_targets if cfg else []) if t != gw]
+        targets = list(gws)
+        targets += [(t, t) for t in (cfg.ping_targets if cfg else []) if t not in {g for _, g in gws}]
         results = list(self._pool.map(lambda t: ping(t[1]), targets))
         pings = [{"name": n, "target": t, "rtt": r[0], "loss": r[1]} for (n, t), r in zip(targets, results)]
 
@@ -468,6 +475,7 @@ class Collector:
             "time": now, "interval": INTERVAL, "system": sysinfo, "interfaces": ifaces, "ping": pings,
             "clients": clients, "accounting": self.acct.ok, "accounting_error": self.acct.error,
             "wan": {"interface": topo["wan"], "up": bool(wan_if and wan_if["up"]), "gateway": gw},
+            "wans": _safe(wans_state, []),
             **self._slow,
         }
         self.snapshot = snap
@@ -547,6 +555,27 @@ class Collector:
 collector = Collector()
 
 
+def wan_gateways() -> list[tuple[str, str]]:
+    """[("gateway", шлюз WAN1), ("gateway2", шлюз WAN2)] — до кого мерить задержку провайдера."""
+    from app.services import multiwan, wan
+    if not wan.multi():
+        gw = wan.current_gateway()
+        return [("gateway", gw)] if gw else []
+    info = multiwan.wan_info()
+    return [(name, info[w]["gateway"]) for w, name in (("wan1", "gateway"), ("wan2", "gateway2"))
+            if info.get(w, {}).get("gateway")]
+
+
+def wans_state() -> list[dict]:
+    """Два провайдера: кто жив и через кого идёт трафик (один WAN — пусто)."""
+    from app.services import multiwan, wan
+    if not wan.multi():
+        return []
+    st = multiwan.status()
+    return [{"id": w.id, "name": w.name, "interface": w.interface, "healthy": w.healthy, "active": w.active,
+             "rtt": w.rtt, "gateway": w.gateway, "mode": st.config.mode} for w in st.wans]
+
+
 # --- настройки -------------------------------------------------------------------------------
 def get_config():
     from app.core.store import store
@@ -570,6 +599,8 @@ def zabbix_values(snap: dict) -> dict:
         "cpu": s["cpu"], "mem": s["memory"].get("percent"), "temp": s["temperature"],
         "load1": (s["load"] or [None])[0], "uptime": s["uptime"],
         "wan.up": int(snap["wan"]["up"]), "clients.active": len(snap.get("leases") or []),
+        "wan2.healthy": next((int(bool(w["healthy"])) for w in snap.get("wans") or [] if w["id"] == "wan2"), -1),
+        "wan.active": ",".join(w["name"] for w in snap.get("wans") or [] if w["active"]) or "WAN",
         "dhcp.leases": len(snap.get("leases") or []),
         "vpn.up": -1 if not snap.get("vpn") else int(snap["vpn"]["up"]),
         "smb.sessions": snap.get("smb_sessions") or 0,

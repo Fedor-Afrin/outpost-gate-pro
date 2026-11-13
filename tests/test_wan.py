@@ -71,7 +71,7 @@ def env(tmp_path, monkeypatch):
                  "kernel_ipv4_routes", "addr_add", "addr_del", "route_add", "route_del"):
         monkeypatch.setattr(netlink, name, getattr(kernel, name))
     started = []
-    monkeypatch.setattr(wan, "start_dhcp", lambda ifname: started.append(ifname))
+    monkeypatch.setattr(wan, "start_dhcp", lambda ifname, wid="wan1": started.append(ifname))
     return store, kernel, started
 
 
