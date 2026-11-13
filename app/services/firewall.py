@@ -13,6 +13,7 @@
 
   input   — с WAN: только ответы, ICMP, DHCP и (по галочке) управление;
             OSPF (протокол 89) на интерфейсах OSPF, BGP (TCP 179) от своих соседей;
+            мониторинг (Prometheus, SNMP, Zabbix agent) — от адресов из настроек;
             из VPN: всё (site-to-site) или только ответы (режим NAT)
   forward — LAN → WAN (если нет kill switch), LAN → VPN; WAN → LAN закрыто
   NAT     — masquerade в WAN; в VPN — по настройке туннеля; проброс портов (DNAT)
@@ -56,6 +57,17 @@ class RoutingRules:
 def management_ports() -> list[int]:
     """Веб/API и SSH-доступ к CLI роутера."""
     return sorted({int(os.getenv("API_PORT", "8000")), int(os.getenv("CLI_SSH_PORT", "22"))})
+
+
+# мониторинг: [(протокол, порт, источники, комментарий)] — см. exporters.firewall_rules()
+MonitorRules = list
+
+
+def render_monitor(monitor) -> str:
+    out = ""
+    for proto, port, sources, comment in monitor or ():
+        out += f'{I}ip saddr {{ {", ".join(sources)} }} {proto} dport {port} accept   # {comment}\n'
+    return out
 
 
 # --- правила пользователя -> nft ------------------------------------------------------
@@ -121,7 +133,8 @@ def render_routing(routing: RoutingRules | None, lan) -> str:
 
 def ruleset(wan: str, lan, wan_management: bool, vpn: VpnRules | None = None,
             rules: list[tuple[int, FirewallRule]] = (), forwards: list[tuple[int, PortForward]] = (),
-            routing: RoutingRules | None = None, links: list[tuple[str, str]] = ()) -> str:
+            routing: RoutingRules | None = None, links: list[tuple[str, str]] = (),
+            monitor: MonitorRules | None = None) -> str:
     """lan — мост или список мостов сегментов; links — разрешённый транзит между сегментами
     [(мост-откуда, мост-куда)]; без него сегменты друг друга не видят."""
     lans = [lan] if isinstance(lan, str) else list(lan)
@@ -178,7 +191,7 @@ table inet {TABLE} {{
         ct state established,related accept
         ct state invalid drop
         iifname "lo" accept
-{user_in_block}{render_routing(routing, lans)}{input_vpn}        iifname != "{wan}" accept            # LAN — без ограничений
+{user_in_block}{render_routing(routing, lans)}{render_monitor(monitor)}{input_vpn}        iifname != "{wan}" accept            # LAN — без ограничений
         ip protocol icmp accept
         udp sport 67 udp dport 68 accept     # ответы DHCP-сервера провайдера
 {ipsec_rules}{mgmt_rule}        drop                                 # всё остальное с WAN
@@ -200,7 +213,8 @@ table inet {TABLE} {{
 
 
 def system_rules(wan: str | None, wan_management: bool, vpn: VpnRules | None,
-                 routing: RoutingRules | None = None, links_named: list[tuple[str, str]] = ()) -> dict[str, list[str]]:
+                 routing: RoutingRules | None = None, links_named: list[tuple[str, str]] = (),
+                 monitor: MonitorRules | None = None) -> dict[str, list[str]]:
     """То же, что делают системные правила, — человеческим языком (для веб-интерфейса)."""
     mgmt = ", ".join(str(p) for p in management_ports())
     inp = ["Ответы на соединения, начатые роутером, — разрешены",
@@ -212,6 +226,8 @@ def system_rules(wan: str | None, wan_management: bool, vpn: VpnRules | None,
         inp.append(f"OSPF на {', '.join(routing.ospf_ifaces)} — разрешён")
     if routing and routing.bgp_peers:
         inp.append(f"BGP от соседей {', '.join(routing.bgp_peers)} (TCP 179) — разрешён")
+    for proto, port, sources, comment in monitor or ():
+        inp.append(f"{comment} ({proto.upper()} {port}) от {', '.join(sources)} — разрешён")
     inp.append(f"С WAN ({wan}): ping и DHCP" + (f", управление (порты {mgmt})" if wan_management else ""))
     if vpn and vpn.ipsec_server:
         inp.append(f"С WAN от сервера L2TP {vpn.ipsec_server}: IKE, ESP, L2TP")
@@ -248,8 +264,8 @@ def apply_text(text: str) -> None:
 
 
 def apply(wan: str, lan, wan_management: bool, vpn: VpnRules | None = None,
-          rules=(), forwards=(), routing: RoutingRules | None = None, links=()) -> None:
-    apply_text(ruleset(wan, lan, wan_management, vpn, rules, forwards, routing, links))
+          rules=(), forwards=(), routing: RoutingRules | None = None, links=(), monitor=None) -> None:
+    apply_text(ruleset(wan, lan, wan_management, vpn, rules, forwards, routing, links, monitor))
     print(f"[firewall] применён: WAN={wan} LAN={lan} управление с WAN={'да' if wan_management else 'нет'}"
           + (f" VPN={vpn.iface} NAT={'да' if vpn.nat else 'нет'} kill switch={'да' if vpn.killswitch else 'нет'}"
              if vpn else "")
@@ -257,7 +273,7 @@ def apply(wan: str, lan, wan_management: bool, vpn: VpnRules | None = None,
 
 
 def context(lan_cfg=None):
-    """(wan, мосты LAN, wan_management, vpn, rules, forwards, routing, links) или None, если LAN выключен."""
+    """(wan, мосты LAN, wan_management, vpn, rules, forwards, routing, links, monitor) или None, если LAN выключен."""
     from app.services import firewall_rules, lan, routing, vpn   # здесь, чтобы не было циклического импорта
     segs = lan.segments()
     if lan_cfg is not None:
@@ -267,7 +283,7 @@ def context(lan_cfg=None):
     if not (active and wan_if):
         return None
     return (wan_if, [s.bridge for s in active], segs[0].wan_management, vpn.firewall_rules(),
-            firewall_rules.rules(), firewall_rules.forwards(), routing_rules(), segment_links(active))
+            firewall_rules.rules(), firewall_rules.forwards(), routing_rules(), segment_links(active), monitor_rules())
 
 
 def segment_links(active) -> list[tuple[str, str]]:
@@ -288,6 +304,11 @@ def routing_rules() -> RoutingRules | None:
         print(f"[firewall] WARNING: маршрутизация: {e}")
         return None
     return r or None
+
+
+def monitor_rules() -> MonitorRules:
+    from app.services import exporters
+    return exporters.firewall_rules()
 
 
 def refresh(lan_cfg=None) -> None:

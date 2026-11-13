@@ -24,6 +24,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         strongswan-charon strongswan-swanctl xl2tpd ppp \
         frr frr-pythontools \
         samba samba-common-bin samba-vfs-modules fdisk e2fsprogs exfatprogs \
+        snmpd \
+    && rm -rf /var/lib/apt/lists/*
+
+# Zabbix agent: agent 2, если есть в репозитории дистрибутива, иначе классический zabbix_agentd
+RUN apt-get update \
+    && (apt-get install -y --no-install-recommends zabbix-agent2 \
+        || apt-get install -y --no-install-recommends zabbix-agent) \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=awg-go /out/amneziawg-go /usr/local/bin/amneziawg-go
@@ -49,5 +56,5 @@ ENV ROUTER_MODE=dev \
     API_HOST=0.0.0.0 \
     API_PORT=8000
 
-EXPOSE 8000 22
+EXPOSE 8000 22 161/udp 10050
 ENTRYPOINT ["/entrypoint.sh"]

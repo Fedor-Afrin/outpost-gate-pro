@@ -1,0 +1,22 @@
+# Prometheus: опрос OutpostGate Pro.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: outpost-gate
+    metrics_path: /metrics
+    scrape_interval: 15s
+    # Если на роутере задан токен (Monitoring → Экспорт → Prometheus) — раскомментируйте:
+    # authorization:
+    #   type: Bearer
+    #   credentials: "ВАШ-ТОКЕН"
+    static_configs:
+      # dev-режим на этом же компьютере: веб роутера проброшен на порт 8001
+      - targets: ["host.docker.internal:8001"]
+        labels:
+          router: dev
+      # роутер в сети (режим host / ВМ / железо): адрес LAN и порт веб-интерфейса 8000
+      # - targets: ["192.168.88.1:8000"]
+      #   labels:
+      #     router: office

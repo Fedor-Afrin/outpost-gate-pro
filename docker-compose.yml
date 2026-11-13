@@ -25,6 +25,8 @@ services:
     ports:
       - "8001:8000"
       - "2223:22"        # SSH -> CLI роутера
+      - "1161:161/udp"   # SNMP (Monitoring → Экспорт), с хоста: snmpwalk -v2c -c public localhost:1161
+      - "10060:10050"    # Zabbix agent: на хосте 10050 часто занят своим агентом
     volumes:
       - ./app:/opt/outpost-gate-pro/app       # правки кода без пересборки
       - ./web:/opt/outpost-gate-pro/web
