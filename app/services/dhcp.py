@@ -71,6 +71,13 @@ def _prepare_dirs() -> None:
         KEA_LIB.parent.mkdir(parents=True, exist_ok=True)
         KEA_LIB.symlink_to(real)
     KEA_RUN.mkdir(parents=True, exist_ok=True)
+    # первая версия переноса аренд из dnsmasq писала строки с \r\n — Kea такой файл не открывает
+    lf = leases_file()
+    if lf.exists():
+        raw = lf.read_bytes()
+        if b"\r" in raw:
+            lf.write_bytes(raw.replace(b"\r\n", b"\n").replace(b"\r", b""))
+            print("[dhcp] файл аренд Kea исправлен (переводы строк)")
 
 
 def subnet_id(seg: LanConfig) -> int:
@@ -246,7 +253,7 @@ def migrate_dnsmasq_leases(segments) -> None:
         exp = int(expiry) if expiry != "0" else int(time.time()) + 86400 * 365
         rows.append([ip, mac, "", 43200, exp, subnet_id(seg), 0, 0, "" if name == "*" else name, 0, ""])
     with new.open("w", newline="") as f:
-        w = csv.writer(f)
+        w = csv.writer(f, lineterminator="\n")     # Kea не принимает \r\n (Windows-переводы строк)
         w.writerow(["address", "hwaddr", "client_id", "valid_lifetime", "expire", "subnet_id",
                     "fqdn_fwd", "fqdn_rev", "hostname", "state", "user_context"])
         w.writerows(rows)
