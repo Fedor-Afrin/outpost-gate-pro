@@ -123,7 +123,7 @@ yesno() {   # yesno "Вопрос" y|n
     [[ "${REPLY,,}" =~ ^(y|yes|д|да)$ ]]
 }
 
-in_list() { local x="$1"; shift; for i in "$@"; do [[ "$i" == "$x" ]] && return 0; done; return 1; }
+in_list() { local x="$1" item; shift; for item in "$@"; do [[ "$item" == "$x" ]] && return 0; done; return 1; }
 
 # --- проверки -----------------------------------------------------------------------------------
 preflight() {
@@ -168,7 +168,7 @@ iface_ipv4() { ip -4 -o addr show dev "$1" 2>/dev/null | awk '{print $4}' | past
 host_ssh_port() { sshd -T 2>/dev/null | awk '/^port /{print $2; exit}' || true; }
 
 show_ifaces() {
-    local i=0 flags
+    local i=0 flags n
     printf "  ${B}%-3s %-14s %-7s %-18s %-20s %s${N}\n" "#" "Порт" "Линк" "MAC" "IPv4" ""
     for n in "${IFACES[@]}"; do
         i=$((i + 1)); flags=""
@@ -619,7 +619,7 @@ do_uninstall() {
     [[ -f "$STATE" ]] && load_state
     warn "будут удалены: контейнер, настройки сети сервера от роутера, правила daemon.json"
     [[ $PURGE -eq 1 ]] && warn "и ВСЕ настройки и данные роутера: $CONF_DIR, $DATA_DIR"
-    yesno "Удалить OutpostGate Pro?" n || exit 0
+    [[ $YES -eq 1 ]] || yesno "Удалить OutpostGate Pro?" n || exit 0
     if [[ $PURGE -eq 1 && $YES -eq 0 ]]; then
         read -rp "  Для удаления данных введите purge: " REPLY
         [[ "$REPLY" == purge ]] || die "отменено"
