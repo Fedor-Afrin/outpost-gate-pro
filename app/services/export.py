@@ -135,7 +135,7 @@ def export_text(data: dict, *, show_sensitive: bool = False, version: str = "", 
         o.menu("/ip dns", [line("set", ("servers", dns.forwarders), ("forward-only", dns.forward_only),
                                 ("dnssec", dns.dnssec), ("cache-size", f"{dns.cache_mb}M"))])
         o.menu("/ip dns zone", [line("add", ("name", z.name), ("ttl", z.ttl), ("dhcp-names", z.dhcp_names),
-                                     ("auto-ptr", z.auto_ptr)) for z in dns.zones])
+                                     ("auto-ptr", z.auto_ptr), ("hidden", z.hidden)) for z in dns.zones])
         recs = []
         for z in dns.zones:
             for r in z.records:

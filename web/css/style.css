@@ -258,3 +258,9 @@ td.num, th.num { text-align: end; font-variant-numeric: tabular-nums; white-spac
 #page-qos .edit-table input.narrow { width: 90px; }
 #sch-days label { display: inline-flex; gap: 4px; align-items: center; }
 [dir=rtl] .export-text { direction: ltr; text-align: left; }
+.rec-box { border-top: 1px solid #e3e6ea; margin-top: 12px; padding-top: 4px; }
+.rec-form { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-end; }
+.rec-form label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: #5b6573; }
+.rec-form input, .rec-form select { padding: 5px 7px; border: 1px solid #c8ced6; border-radius: 4px; font-size: 13px; }
+.rec-form input.narrow { width: 70px; }
+tr.muted td { color: #8a94a3; }
