@@ -636,3 +636,13 @@ def test_interface_gre(ctx):
     assert [x for x in cx.api.calls if x[0] == "PUT"][-1][2] == {"tunnels": []}
     with pytest.raises(c.CliError):
         c.execute(cx, "/interface gre add address=172.16.0.9/30", [])
+
+
+def test_nat_from_vpn(ctx):
+    cx, out = ctx
+    c.execute(cx, "/ip firewall nat add chain=dstnat action=dst-nat protocol=udp dst-port=5060 "
+                  "to-addresses=192.168.1.50 in-interface-list=VPN", [])
+    post = [x for x in cx.api.calls if x[0] == "POST"][-1]
+    assert post[2]["from_zone"] == "vpn" and post[2]["wan_port"] == "5060"
+    with pytest.raises(c.CliError, match="in-interface-list"):
+        c.execute(cx, "/ip firewall nat add dst-port=1 to-addresses=192.168.1.5 in-interface-list=LAN", [])

@@ -686,8 +686,8 @@ def filter_move(ctx, pos, named):
         ctx.api.post(f"/api/firewall/rules/{rule['id']}/move", {"direction": "down" if steps > 0 else "up"})
 
 
-NAT_FIELDS = ("chain", "action", "protocol", "dst-port", "to-addresses", "to-ports", "src-address", "comment",
-              "disabled")
+NAT_FIELDS = ("chain", "action", "protocol", "dst-port", "to-addresses", "to-ports", "src-address",
+              "in-interface-list", "comment", "disabled")
 
 
 def _nat_from_args(named: dict, base: dict | None = None) -> dict:
@@ -700,6 +700,12 @@ def _nat_from_args(named: dict, base: dict | None = None) -> dict:
             body[api] = named[cli] or None
     if "to-ports" in named:
         body["to_port"] = int(named["to-ports"]) if named["to-ports"] else None
+    if "in-interface-list" in named:
+        v = (named["in-interface-list"] or "wan").lower().replace(" ", "")
+        zones = {"wan": "wan", "vpn": "vpn", "wan,vpn": "any", "vpn,wan": "any", "all": "any", "any": "any"}
+        if v not in zones:
+            raise CliError("in-interface-list: WAN, VPN или WAN,VPN")
+        body["from_zone"] = zones[v]
     if "disabled" in named:
         body["enabled"] = not yes(named["disabled"])
     if body.get("protocol") in ("tcp,udp", "udp,tcp"):
@@ -708,17 +714,18 @@ def _nat_from_args(named: dict, base: dict | None = None) -> dict:
 
 
 def _nat_body(f: dict) -> dict:
-    return {k: f.get(k) for k in ("enabled", "protocol", "wan_port", "to_ip", "to_port", "src", "description")}
+    return {k: f.get(k) for k in ("enabled", "protocol", "wan_port", "to_ip", "to_port", "src", "description",
+                                  "from_zone") if k in f}
 
 
 def nat_print(ctx, pos, named):
     fw = ctx.api.get("/api/firewall")
     fwd = fw["forwards"]
     ctx.numbers["/ip firewall nat"] = fwd
-    table(ctx, ["chain", "action", "protocol", "dst-port", "to-addresses", "to-ports", "src-address", "packets",
-                "comment"],
-          [["dstnat", "dst-nat", f["protocol"], f["wan_port"], f["to_ip"], f.get("to_port"), f.get("src"),
-            f["packets"], f.get("description")] for f in fwd],
+    table(ctx, ["chain", "action", "protocol", "in-interface-list", "dst-port", "to-addresses", "to-ports",
+                "src-address", "packets", "comment"],
+          [["dstnat", "dst-nat", f["protocol"], {"wan": "WAN", "vpn": "VPN", "any": "WAN,VPN"}[f.get("from_zone", "wan")],
+            f["wan_port"], f["to_ip"], f.get("to_port"), f.get("src"), f["packets"], f.get("description")] for f in fwd],
           flags=["X" if not f["enabled"] else "" for f in fwd], legend="X - disabled")
     for line in fw["system"]["nat"]:
         ctx.out(f";;; srcnat: {line}")
@@ -2137,7 +2144,7 @@ ROOT = Menu("OutpostGate Pro", {
                 "add": Cmd(nat_add, "add chain=dstnat action=dst-nat protocol=tcp dst-port=8080 "
                                     "to-addresses=192.168.88.20 to-ports=80", NAT_FIELDS,
                            {"chain": ["dstnat"], "action": ["dst-nat"], "protocol": ["tcp", "udp", "tcp,udp"],
-                            "disabled": YESNO}),
+                            "in-interface-list": ["WAN", "VPN", "WAN,VPN"], "disabled": YESNO}),
                 "set": Cmd(nat_set, "изменить: set 0 параметр=значение", ("numbers",) + NAT_FIELDS),
                 "enable": Cmd(_nat_toggle(True), "включить", ("numbers",)),
                 "disable": Cmd(_nat_toggle(False), "выключить", ("numbers",)),

@@ -172,7 +172,9 @@ def export_text(data: dict, *, show_sensitive: bool = False, version: str = "", 
         f = fr.PortForward(**fr._from_yaml(d, fr._FWD_KEYS))
         nat.append(line("add", ("chain", "dstnat"), ("action", "dst-nat"), ("protocol", f.protocol),
                         ("dst-port", f.wan_port), ("to-addresses", f.to_ip), ("to-ports", f.to_port),
-                        ("src-address", f.src), ("comment", f.description),
+                        ("src-address", f.src), ("in-interface-list", None if f.from_zone == "wan"
+                                                  else "VPN" if f.from_zone == "vpn" else "WAN,VPN"),
+                        ("comment", f.description),
                         ("disabled", True if not f.enabled else None)))
     o.menu("/ip firewall nat", nat)
 
