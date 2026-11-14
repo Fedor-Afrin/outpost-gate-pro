@@ -30,6 +30,23 @@ KEA = "kea-dhcp4"
 # /var/lib/kea становится ссылкой на data/kea: аренды переживают пересоздание контейнера.
 KEA_LIB = Path(os.getenv("KEA_LIB_DIR", "/var/lib/kea"))
 KEA_RUN = Path(os.getenv("KEA_RUN_DIR", "/run/kea"))
+SYS_NET = Path(os.getenv("OG_SYS_NET", "/sys/class/net"))
+
+# Kea слушает через raw-сокеты, а они привязаны к экземпляру интерфейса (ifindex), не к имени:
+# если мост пересоздан (смена портов, VLAN, адреса, переустановка), Kea продолжает слушать старый
+# и молча перестаёт выдавать адреса. Запоминаем номера мостов и перечитываем Kea, когда они меняются.
+_ifindex: dict[str, int] = {}
+
+
+def ifindexes(names) -> dict[str, int]:
+    """Номера интерфейсов; 0 — интерфейса сейчас нет."""
+    out = {}
+    for n in names:
+        try:
+            out[n] = int((SYS_NET / n / "ifindex").read_text().strip())
+        except (OSError, ValueError):
+            out[n] = 0
+    return out
 _kea = ManagedProcess("kea-dhcp4")
 _lock = threading.RLock()
 
@@ -226,15 +243,35 @@ def apply(segments: list[tuple[LanConfig, list[StaticLease]]], upstream_dns: lis
             Path(tmp).unlink(missing_ok=True)
             raise
         os.replace(tmp, path)
+        bridges = [s.bridge for s, _ in segments]
         if _kea.running():
             _kea.signal(signal.SIGHUP)
-            print(f"[dhcp] Kea перечитал конфигурацию: {', '.join(s.bridge for s, _ in segments)}")
+            print(f"[dhcp] Kea перечитал конфигурацию: {', '.join(bridges)}")
         else:
             _kea.start([KEA, "-c", str(path)], env=_env())
+        _ifindex.clear()
+        _ifindex.update(ifindexes(bridges))
+
+
+def watch_interfaces() -> list[str]:
+    """Мосты пересозданы после запуска Kea — перечитать (Kea заново откроет сокеты, аренды сохранятся).
+    Вызывается сборщиком мониторинга раз в 10 с. -> список пересозданных мостов."""
+    with _lock:
+        if not _ifindex or not _kea.running():
+            return []
+        now = ifindexes(_ifindex)
+        changed = [n for n, i in now.items() if i and i != _ifindex[n]]
+        if not changed:
+            return []
+        _kea.signal(signal.SIGHUP)
+        _ifindex.update({n: now[n] for n in changed})
+        print(f"[dhcp] мост пересоздан ({', '.join(changed)}) — Kea перечитал интерфейсы")
+        return changed
 
 
 def stop() -> None:
     _kea.stop()
+    _ifindex.clear()
 
 
 # --- аренды ----------------------------------------------------------------------------------
