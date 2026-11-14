@@ -251,3 +251,38 @@ def test_kea_leases_crlf_repaired(tmp_path, monkeypatch):
     dhcp.leases_file().write_bytes(b"address,hwaddr,client_id\r\n")
     dhcp._prepare_dirs()
     assert dhcp.leases_file().read_bytes() == b"address,hwaddr,client_id\n"
+
+
+def test_kea_rebinds_when_bridge_recreated(tmp_path, monkeypatch):
+    """Мост пересоздан (новый ifindex) — Kea получает SIGHUP и заново открывает сокеты."""
+    import signal as _signal
+    from app.services import dhcp
+
+    class FakeKea:
+        def __init__(self):
+            self.signals = []
+        def running(self):
+            return True
+        def signal(self, sig):
+            self.signals.append(sig)
+
+    def link(name, idx):
+        (tmp_path / name).mkdir(exist_ok=True)
+        (tmp_path / name / "ifindex").write_text(f"{idx}\n")
+
+    kea = FakeKea()
+    monkeypatch.setattr(dhcp, "SYS_NET", tmp_path)
+    monkeypatch.setattr(dhcp, "_kea", kea)
+    link("br-lan", 5)
+    monkeypatch.setattr(dhcp, "_ifindex", dhcp.ifindexes(["br-lan", "br-lan2"]))   # br-lan2 ещё нет
+    assert dhcp._ifindex == {"br-lan": 5, "br-lan2": 0}
+    assert dhcp.watch_interfaces() == [] and kea.signals == []
+
+    link("br-lan", 87)                                     # пересоздан
+    assert dhcp.watch_interfaces() == ["br-lan"] and kea.signals == [_signal.SIGHUP]
+    assert dhcp.watch_interfaces() == []                   # второй раз — уже учтено
+
+    (tmp_path / "br-lan" / "ifindex").unlink()             # моста временно нет — ничего не делаем
+    assert dhcp.watch_interfaces() == []
+    link("br-lan2", 88)                                    # появился позже Kea
+    assert dhcp.watch_interfaces() == ["br-lan2"] and len(kea.signals) == 2
