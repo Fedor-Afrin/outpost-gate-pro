@@ -46,6 +46,15 @@ class VpnRules:
 
 
 @dataclass
+class GreRules:
+    ifaces: list[str]        # gre1 …: доверенная сеть «роутер — роутер» (транзит с LAN в обе стороны)
+    remotes: list[str]       # вторые роутеры: впустить от них GRE (протокол 47)
+
+    def __bool__(self) -> bool:
+        return bool(self.ifaces)
+
+
+@dataclass
 class RoutingRules:
     ospf_ifaces: list[str]   # где OSPF ищет соседей: пропустить протокол 89
     bgp_peers: list[str]     # соседи BGP: пропустить TCP 179 от них
@@ -176,9 +185,11 @@ def render_routing(routing: RoutingRules | None, lan) -> str:
 def ruleset(wan: str, lan, wan_management: bool, vpn: VpnRules | None = None,
             rules: list[tuple[int, FirewallRule]] = (), forwards: list[tuple[int, PortForward]] = (),
             routing: RoutingRules | None = None, links: list[tuple[str, str]] = (),
-            monitor: MonitorRules | None = None, qos: tuple[str, str] | None = None) -> str:
+            monitor: MonitorRules | None = None, qos: tuple[str, str] | None = None,
+            gre: GreRules | None = None) -> str:
     """wan — интерфейс WAN или список (два провайдера); lan — мост или список мостов сегментов;
-    links — разрешённый транзит между сегментами [(мост-откуда, мост-куда)]."""
+    links — разрешённый транзит между сегментами [(мост-откуда, мост-куда)];
+    gre — туннели GRE «роутер — роутер»."""
     lans = [lan] if isinstance(lan, str) else list(lan)
     lan = ifset(lans)
     wans = [wan] if isinstance(wan, str) else list(wan)
@@ -200,10 +211,18 @@ def ruleset(wan: str, lan, wan_management: bool, vpn: VpnRules | None = None,
                        f'{I}ip saddr {srv} ip protocol esp accept\n'
                        f'{I}ip saddr {srv} udp dport 1701 accept           # L2TP (внутри IPsec)\n')
 
+    gre_in = ""
+    if gre:
+        remotes = ", ".join(gre.remotes)
+        gre_in = f'{I}ip protocol 47 ip saddr {{ {remotes} }} accept   # GRE от вторых роутеров\n'
     forward = ""
     if vpn:
         forward += (f'{I}oifname "{vpn.iface}" tcp flags syn tcp option maxseg size set rt mtu\n'
                     f'{I}iifname "{vpn.iface}" tcp flags syn tcp option maxseg size set rt mtu\n')
+    if gre:
+        g = ifset(gre.ifaces)
+        forward += (f'{I}oifname {g} tcp flags syn tcp option maxseg size set rt mtu\n'
+                    f'{I}iifname {g} tcp flags syn tcp option maxseg size set rt mtu\n')
     forward += f'{I}ct state established,related accept\n{I}ct state invalid drop\n'
     forward += user_fwd and f"{I}# --- правила пользователя ---\n{user_fwd}{I}# --- системные ---\n"
     if active_fwd:
@@ -218,6 +237,11 @@ def ruleset(wan: str, lan, wan_management: bool, vpn: VpnRules | None = None,
             forward += f'{I}iifname "{vpn.iface}" oifname {lan} accept   # центр видит устройства LAN\n'
     for a, b in links:
         forward += f'{I}iifname "{a}" oifname "{b}" accept   # транзит между сегментами LAN\n'
+    if gre:
+        g = ifset(gre.ifaces)
+        forward += (f'{I}iifname {lan} oifname {g} accept   # LAN → второй роутер (GRE)\n'
+                    f'{I}iifname {g} oifname {lan} accept   # второй роутер → LAN (GRE)\n'
+                    f'{I}iifname {g} oifname {g} accept     # транзит между туннелями GRE\n')
 
     post = f'{I}oifname {wan} masquerade\n'
     if vpn and vpn.nat:
@@ -235,7 +259,7 @@ table inet {TABLE} {{
         ct state established,related accept
         ct state invalid drop
         iifname "lo" accept
-{user_in_block}{render_routing(routing, lans)}{render_monitor(monitor)}{input_vpn}        iifname != {wan} accept            # LAN — без ограничений
+{user_in_block}{gre_in}{render_routing(routing, lans)}{render_monitor(monitor)}{input_vpn}        iifname != {wan} accept            # LAN — без ограничений
         ip protocol icmp accept
         udp sport 67 udp dport 68 accept     # ответы DHCP-сервера провайдера
 {ipsec_rules}{mgmt_rule}        drop                                 # всё остальное с WAN
@@ -258,7 +282,7 @@ table inet {TABLE} {{
 
 def system_rules(wan: str | None, wan_management: bool, vpn: VpnRules | None,
                  routing: RoutingRules | None = None, links_named: list[tuple[str, str]] = (),
-                 monitor: MonitorRules | None = None) -> dict[str, list[str]]:
+                 monitor: MonitorRules | None = None, gre: GreRules | None = None) -> dict[str, list[str]]:
     """То же, что делают системные правила, — человеческим языком (для веб-интерфейса)."""
     mgmt = ", ".join(str(p) for p in management_ports())
     inp = ["Ответы на соединения, начатые роутером, — разрешены",
@@ -266,6 +290,8 @@ def system_rules(wan: str | None, wan_management: bool, vpn: VpnRules | None,
     if vpn:
         inp.append(f"Из VPN ({vpn.iface}) — " + ("разрешено всё (site-to-site)" if vpn.inbound
                                                  else "только ответы (режим NAT)"))
+    if gre:
+        inp.append(f"GRE от {', '.join(gre.remotes)} — разрешён; из туннелей {', '.join(gre.ifaces)} — всё")
     if routing and routing.ospf_ifaces:
         inp.append(f"OSPF на {', '.join(routing.ospf_ifaces)} — разрешён")
     if routing and routing.bgp_peers:
@@ -286,6 +312,8 @@ def system_rules(wan: str | None, wan_management: bool, vpn: VpnRules | None,
             fwd.append(f"VPN → LAN — разрешено (site-to-site)")
     for a, b in links_named:
         fwd.append(f"{a} → {b} — разрешено")
+    if gre:
+        fwd.append(f"LAN ↔ GRE ({', '.join(gre.ifaces)}) — разрешено в обе стороны")
     fwd.append("WAN → LAN — запрещено (кроме проброса портов)")
 
     nat = [f"Masquerade в WAN ({wan})"]
@@ -309,8 +337,9 @@ def apply_text(text: str) -> None:
 
 
 def apply(wan: str, lan, wan_management: bool, vpn: VpnRules | None = None,
-          rules=(), forwards=(), routing: RoutingRules | None = None, links=(), monitor=None, qos=None) -> None:
-    apply_text(ruleset(wan, lan, wan_management, vpn, rules, forwards, routing, links, monitor, qos))
+          rules=(), forwards=(), routing: RoutingRules | None = None, links=(), monitor=None, qos=None,
+          gre: GreRules | None = None) -> None:
+    apply_text(ruleset(wan, lan, wan_management, vpn, rules, forwards, routing, links, monitor, qos, gre))
     print(f"[firewall] применён: WAN={wan} LAN={lan} управление с WAN={'да' if wan_management else 'нет'}"
           + (f" VPN={vpn.iface} NAT={'да' if vpn.nat else 'нет'} kill switch={'да' if vpn.killswitch else 'нет'}"
              if vpn else "")
@@ -336,7 +365,7 @@ def context(lan_cfg=None):
         wan_if = wans
     return (wan_if, [s.bridge for s in active], segs[0].wan_management, vpn.firewall_rules(),
             firewall_rules.rules(), firewall_rules.forwards(), routing_rules(), segment_links(active), monitor_rules(),
-            qos_ports())
+            qos_ports(), gre_rules())
 
 
 def segment_links(active) -> list[tuple[str, str]]:
@@ -357,6 +386,15 @@ def routing_rules() -> RoutingRules | None:
         print(f"[firewall] WARNING: маршрутизация: {e}")
         return None
     return r or None
+
+
+def gre_rules() -> GreRules | None:
+    from app.services import gre
+    try:
+        return gre.firewall_rules()
+    except Exception as e:  # noqa: BLE001
+        print(f"[firewall] WARNING: GRE: {e}")
+        return None
 
 
 def qos_ports() -> tuple[str, str] | None:

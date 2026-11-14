@@ -211,7 +211,8 @@ def status() -> FirewallStatus:
         forwards=[PortForwardView(id=fid, **f.model_dump(), packets=c.get(f"fwd:{fid}", (0, 0))[0],
                                   bytes=c.get(f"fwd:{fid}", (0, 0))[1]) for fid, f in forwards()],
         system=firewall.system_rules(wan_if, cfg.wan_management, vpn_rules, firewall.routing_rules(),
-                                     firewall.segment_links_named(active), firewall.monitor_rules()),
+                                     firewall.segment_links_named(active), firewall.monitor_rules(),
+                                     firewall.gre_rules()),
         management_ports=firewall.management_ports(),
     )
 

@@ -264,3 +264,6 @@ td.num, th.num { text-align: end; font-variant-numeric: tabular-nums; white-spac
 .rec-form input, .rec-form select { padding: 5px 7px; border: 1px solid #c8ced6; border-radius: 4px; font-size: 13px; }
 .rec-form input.narrow { width: 70px; }
 tr.muted td { color: #8a94a3; }
+.warn { color: #b26b00; }
+span.muted { color: #8a94a3; }
+.nowrap { white-space: nowrap; }

@@ -38,7 +38,7 @@ SYSCTL_FILE=$P/etc/sysctl.d/99-outpost-gate.conf
 MODULES_FILE=$P/etc/modules-load.d/outpost-gate.conf
 DAEMON_JSON=$P/etc/docker/daemon.json
 RESOLVED_FILE=$P/etc/systemd/resolved.conf.d/outpost-gate.conf
-MODULES=(wireguard ppp_generic l2tp_ppp pppox sch_htb sch_fq_codel sch_ingress cls_u32 act_police nf_conntrack 8021q)
+MODULES=(wireguard ip_gre ppp_generic l2tp_ppp pppox sch_htb sch_fq_codel sch_ingress cls_u32 act_police nf_conntrack 8021q)
 
 # --- вывод --------------------------------------------------------------------------------------
 if [[ -t 1 ]]; then B=$'\e[1m'; G=$'\e[32m'; Y=$'\e[33m'; R=$'\e[31m'; C=$'\e[36m'; N=$'\e[0m'; else B= G= Y= R= C= N=; fi
@@ -422,15 +422,21 @@ host_dns() {
 }
 
 # --- сеть сервера --------------------------------------------------------------------------------
-host_network() {
-    say "Сеть сервера"
-    mkdir -p "$(dirname "$MODULES_FILE")" "$(dirname "$SYSCTL_FILE")"
+load_modules() {
+    # модули ядра для VPN, GRE, QoS; список — и в автозагрузку (после перезагрузки сервера)
+    mkdir -p "$(dirname "$MODULES_FILE")"
     : > "$MODULES_FILE"
     local m
     for m in "${MODULES[@]}"; do
         modprobe "$m" 2>/dev/null && echo "$m" >> "$MODULES_FILE" || true
     done
     ok "модули ядра: $(paste -sd' ' "$MODULES_FILE")"
+}
+
+host_network() {
+    say "Сеть сервера"
+    mkdir -p "$(dirname "$SYSCTL_FILE")"
+    load_modules
 
     cat > "$SYSCTL_FILE" <<'EOF'
 # OutpostGate Pro: маршрутизатор
@@ -649,6 +655,7 @@ do_update() {
     fi
     sed -i '/^WAN_MODE=/d;/^HOST_DNS=/d' "$STATE"
     printf 'WAN_MODE=%s\nHOST_DNS="%s"\n' "$WAN_MODE" "$HOST_DNS" >> "$STATE"
+    load_modules                                     # новые модули (например, ip_gre) — без переустановки
     docker_forward_open
     host_dns
     say "Обновляю: пересборка образа и перезапуск"

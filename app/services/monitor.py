@@ -395,6 +395,11 @@ class Collector:
                 dhcp.watch_interfaces()                  # Kea после пересоздания мостов
             except Exception as e:  # noqa: BLE001
                 print(f"[dhcp] ERROR: {e}")
+            try:
+                from app.services import gre
+                gre.watch()                              # GRE: underlay (AmneziaWG) поднялся позже
+            except Exception as e:  # noqa: BLE001
+                print(f"[gre] ERROR: {e}")
             if time.time() - self._last_save > SAVE_EVERY:
                 self.save()
             self._stop.wait(max(1.0, INTERVAL - (time.time() - started)))

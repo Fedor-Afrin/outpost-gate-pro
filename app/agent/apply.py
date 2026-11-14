@@ -16,7 +16,7 @@ router.yaml — единый источник правды (аналог /export
  10. NTP (chrony): время роутера и раздача в LAN
 Дальше: Status, Safe Mode.
 """
-from app.services import addresses, exporters, files, firewall, lan, ntp, routes, routing, sysctl, vpn, wan
+from app.services import addresses, exporters, files, firewall, gre, lan, ntp, routes, routing, sysctl, vpn, wan
 
 
 def _step(name: str, fn) -> None:
@@ -36,6 +36,7 @@ def apply_startup() -> None:
     _step("WAN", wan.apply_startup)
     _step("LAN", lan.apply_startup)
     _step("VPN", vpn.apply_startup)
+    _step("GRE", gre.apply_startup)
     _step("адреса", addresses.apply_all)
     _step("маршруты", routes.apply_all)
     _step("OSPF/BGP", routing.apply_startup)

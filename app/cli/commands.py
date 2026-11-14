@@ -433,6 +433,72 @@ def route_add(ctx, pos, named):
     ctx.api.post("/api/ip/routes", body)
 
 
+# --- /interface gre ----------------------------------------------------------------------------------------
+GRE_FIELDS = {"name": "name", "remote-address": "remote", "local-address": "local", "underlay": "underlay",
+              "address": "address", "routes": "routes", "mtu": "mtu", "ttl": "ttl", "ospf": "ospf",
+              "ospf-area": "ospf_area", "ospf-cost": "ospf_cost", "comment": "comment", "disabled": "enabled"}
+
+
+def _gre_body(named: dict, base: dict | None = None) -> dict:
+    t = dict(base or {})
+    for cli, api in GRE_FIELDS.items():
+        if cli not in named:
+            continue
+        v = named[cli]
+        if api == "enabled":
+            t["enabled"] = not yes(v)
+        elif api == "ospf":
+            t["ospf"] = yes(v)
+        elif api in ("mtu", "ttl", "ospf_cost"):
+            t[api] = int(v) if v not in ("", None) else None
+        elif api == "routes":
+            t["routes"] = [x for x in v.replace(" ", ",").split(",") if x]
+        else:
+            t[api] = v or None
+    return {k: v for k, v in t.items() if v is not None}
+
+
+def gre_print(ctx, pos, named):
+    d = ctx.api.get("/api/gre")
+    items = d["config"]["tunnels"]
+    st = {s["name"]: s for s in d["tunnels"]}
+    ctx.numbers["/interface gre"] = items
+    table(ctx, ["name", "local-address", "remote-address", "underlay", "address", "routes", "ospf", "mtu"],
+          [[t["name"], t.get("local") or "auto", t["remote"], t.get("underlay"), t["address"], t.get("routes") or None,
+            t.get("ospf_area") if t.get("ospf") else None, t.get("mtu")] for t in items],
+          flags=[("X" if not t["enabled"] else "R" if st.get(t["name"], {}).get("up") else "")
+                 for t in items], legend="X - disabled, R - running")
+    for w in d.get("warnings") or []:
+        ctx.out(f"# {w}")
+
+
+def _gre_put(ctx, tunnels: list[dict]) -> None:
+    ctx.api.put("/api/gre", {"tunnels": tunnels})
+
+
+def gre_add(ctx, pos, named):
+    require(named, "remote-address", "address")
+    tunnels = ctx.api.get("/api/gre")["config"]["tunnels"]
+    if "name" not in named:
+        used = {t["name"] for t in tunnels}
+        named = {**named, "name": next(f"gre{i}" for i in range(1, 100) if f"gre{i}" not in used)}
+    _gre_put(ctx, tunnels + [_gre_body(named, {"enabled": True})])
+
+
+def _gre_change(fn):
+    def run(ctx, pos, named):
+        picked = {t["name"] for t in pick(ctx, "/interface gre", pos, named)}
+        tunnels = ctx.api.get("/api/gre")["config"]["tunnels"]
+        _gre_put(ctx, [x for t in tunnels for x in ([fn(t, named)] if t["name"] in picked else [t]) if x])
+    return run
+
+
+gre_set = _gre_change(lambda t, named: _gre_body({k: v for k, v in named.items() if k != "name"}, t))
+gre_enable = _gre_change(lambda t, named: {**t, "enabled": True})
+gre_disable = _gre_change(lambda t, named: {**t, "enabled": False})
+gre_remove = _gre_change(lambda t, named: None)
+
+
 # --- /ip arp, /ip neighbor -------------------------------------------------------------------------------
 def arp_print(ctx, pos, named):
     items = ctx.api.get("/api/tools/neighbors")
@@ -1944,6 +2010,18 @@ ROOT = Menu("OutpostGate Pro", {
         "wireguard": Menu("WireGuard / AmneziaWG", {"print": pr(wireguard_print),
                                                     "peers": Menu("сервер", {"print": pr(wireguard_peers_print)})}),
         "l2tp-client": Menu("L2TP/IPsec", {"print": pr(l2tp_client_print)}),
+        "gre": Menu("туннели GRE «роутер — роутер» (поверх AmneziaWG / WireGuard / WAN)", {
+            "print": pr(gre_print),
+            "add": Cmd(gre_add, "add remote-address=10.8.1.3 local-address=10.8.1.2 underlay=awg0 "
+                                "address=172.16.0.1/30 routes=192.168.20.0/24 [ospf=yes]",
+                       tuple(GRE_FIELDS), {"disabled": YESNO, "ospf": YESNO, "underlay": iface_names}),
+            "set": Cmd(gre_set, "изменить: set 0 routes=192.168.20.0/24,192.168.21.0/24",
+                       ("numbers",) + tuple(k for k in GRE_FIELDS if k != "name"),
+                       {"disabled": YESNO, "ospf": YESNO}),
+            "enable": Cmd(gre_enable, "включить: enable 0", ("numbers",)),
+            "disable": Cmd(gre_disable, "выключить: disable 0", ("numbers",)),
+            "remove": Cmd(gre_remove, "удалить: remove 0", ("numbers",)),
+        }),
     }),
     "ip": Menu("IP", {
         "multiwan": Menu("два провайдера: резерв или балансировка", {

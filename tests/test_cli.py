@@ -611,3 +611,28 @@ def test_resolve_and_ping_by_name(ctx, monkeypatch):
     monkeypatch.setattr(tools, "resolve_sync", fail)
     with pytest.raises(c.CliError, match="NXDOMAIN"):
         c.execute(cx, "/ping nope", [])
+
+
+def test_interface_gre(ctx):
+    cx, out = ctx
+    t1 = {"name": "gre1", "enabled": True, "remote": "10.8.1.3", "local": "10.8.1.2", "underlay": "awg0",
+          "address": "172.16.0.1/30", "routes": ["192.168.20.0/24"], "mtu": 1380, "ttl": 64, "ospf": True,
+          "ospf_area": "0.0.0.0", "ospf_cost": None}
+    cx.api.data["/api/gre"] = {"config": {"tunnels": [t1]}, "warnings": ["gre1: OSPF выключен"],
+                               "tunnels": [{"name": "gre1", "up": True}]}
+    c.execute(cx, "/interface gre print", [])
+    text = "\n".join(out)
+    assert "gre1" in text and "10.8.1.3" in text and "R - running" in text and "# gre1: OSPF выключен" in text
+    c.execute(cx, "/interface gre add remote-address=10.8.1.4 address=172.16.0.5/30 routes=192.168.30.0/24,192.168.31.0/24", [])
+    put = [x for x in cx.api.calls if x[0] == "PUT"][-1]
+    assert put[1] == "/api/gre" and put[2]["tunnels"][1] == {
+        "name": "gre2", "enabled": True, "remote": "10.8.1.4", "address": "172.16.0.5/30",
+        "routes": ["192.168.30.0/24", "192.168.31.0/24"]}
+    c.execute(cx, "/interface gre set 0 mtu=1300 ospf=no disabled=yes", [])
+    put = [x for x in cx.api.calls if x[0] == "PUT"][-1]
+    assert put[2]["tunnels"][0]["mtu"] == 1300 and put[2]["tunnels"][0]["ospf"] is False
+    assert put[2]["tunnels"][0]["enabled"] is False and put[2]["tunnels"][0]["remote"] == "10.8.1.3"
+    c.execute(cx, "/interface gre remove 0", [])
+    assert [x for x in cx.api.calls if x[0] == "PUT"][-1][2] == {"tunnels": []}
+    with pytest.raises(c.CliError):
+        c.execute(cx, "/interface gre add address=172.16.0.9/30", [])
