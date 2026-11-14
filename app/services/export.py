@@ -196,6 +196,20 @@ def export_text(data: dict, *, show_sensitive: bool = False, version: str = "", 
                                                ("networks", c.networks), ("nat", c.nat), ("killswitch", c.killswitch),
                                                ("mtu", c.mtu))])
 
+    if (data.get("gre") or {}).get("tunnels"):
+        from app.models.gre import GreConfig
+        g = GreConfig.from_yaml(data.get("gre"))
+        o.menu("/interface gre", [line("add", ("name", t.name), ("disabled", not t.enabled), ("local-address", t.local),
+                                       ("remote-address", t.remote), ("underlay", t.underlay), ("mtu", t.mtu),
+                                       ("ttl", t.ttl), ("comment", t.comment)) for t in g.tunnels])
+        o.menu("/ip address", [line("add", ("address", t.address), ("interface", t.name), ("comment", "GRE"))
+                               for t in g.tunnels])
+        o.menu("/ip route", [line("add", ("dst-address", r), ("gateway", t.name), ("comment", "GRE"))
+                             for t in g.tunnels for r in t.routes])
+        o.menu("/routing ospf interface-template", [
+            line("add", ("interfaces", t.name), ("area", t.ospf_area), ("type", "ptp"), ("cost", t.ospf_cost),
+                 ("comment", "GRE")) for t in g.tunnels if t.ospf])
+
     # --- маршрутизация ------------------------------------------------------------------------------
     if data.get("routing"):
         rt = RoutingConfig.model_validate(data["routing"])

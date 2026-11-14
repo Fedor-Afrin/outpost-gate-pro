@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.agent import apply as agent
 from app.api.routes import auth as auth_routes
-from app.api.routes import dhcp, dns, files, firewall, interfaces, ip_addresses, ip_routes, lan, monitor, qos, routing, scheduler, status, system, tools, vpn, wan
+from app.api.routes import dhcp, dns, files, firewall, gre, interfaces, ip_addresses, ip_routes, lan, monitor, qos, routing, scheduler, status, system, tools, vpn, wan
 from app.core import auth
 from app.core.config import settings
 from app.services import ssh_server
@@ -91,6 +91,7 @@ app.include_router(dhcp.router, prefix="/api/dhcp", tags=["DHCP"])
 app.include_router(dns.router, prefix="/api/dns", tags=["DNS"])
 app.include_router(files.router, prefix="/api/files", tags=["Files"])
 app.include_router(vpn.router, prefix="/api/vpn", tags=["VPN"])
+app.include_router(gre.router, prefix="/api/gre", tags=["GRE"])
 app.include_router(firewall.router, prefix="/api/firewall", tags=["Firewall"])
 app.include_router(routing.router, prefix="/api/routing", tags=["Routing"])
 app.include_router(tools.router, prefix="/api/tools", tags=["Tools"])

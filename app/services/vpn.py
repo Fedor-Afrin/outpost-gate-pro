@@ -159,6 +159,14 @@ def allowed_ips(cfg: WgConfig, iface: str | None = None) -> list[str]:
                 nets += [m for m in OSPF_MULTICAST if m not in nets]
         except Exception as e:  # маршрутизация не должна мешать туннелю
             print(f"[vpn] WARNING: OSPF multicast: {e}")
+        try:                                  # GRE поверх этого туннеля: вторые роутеры должны быть в AllowedIPs
+            from app.services import gre
+            for t in gre.get_config().tunnels:
+                if t.enabled and t.underlay == iface and not any(
+                        ipaddress.ip_address(t.remote) in ipaddress.ip_network(n, strict=False) for n in nets):
+                    nets.append(f"{t.remote}/32")
+        except Exception as e:  # noqa: BLE001
+            print(f"[vpn] WARNING: GRE: {e}")
     return nets
 
 

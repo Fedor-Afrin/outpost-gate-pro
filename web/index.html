@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>OutpostGate Pro</title>
-  <link rel="stylesheet" href="css/style.css?v=0.17.4">
+  <link rel="stylesheet" href="css/style.css?v=0.18.0">
 </head>
 <body>
   <!-- вход -->
@@ -738,6 +738,7 @@
         <a class="tab" data-kind="wireguard">WireGuard</a>
         <a class="tab" data-kind="amneziawg">AmneziaWG</a>
         <a class="tab" data-kind="l2tp">L2TP/IPsec</a>
+        <a class="tab" data-kind="gre">GRE</a>
       </div>
       <p class="hint" id="vpn-active-hint">Одновременно работает один туннель: включение одного выключает остальные.</p>
 
@@ -844,6 +845,52 @@
             <button type="submit">Применить</button>
             <span id="l2tp-error" class="error"></span>
             <span id="l2tp-ok" class="ok"></span>
+          </div>
+        </form>
+      </div>
+
+      <!-- GRE -->
+      <div id="gre-panel" hidden>
+        <div class="card">
+          <h2>Туннели GRE</h2>
+          <p class="hint">Связь «роутер — роутер» поверх AmneziaWG, WireGuard или интернета — как interface Tunnel в Cisco.
+            Серверу AmneziaWG сети за роутерами знать не нужно: он видит только GRE между адресами клиентов (10.8.1.2 ↔ 10.8.1.3),
+            а внутри GRE ходят сети LAN — статическими маршрутами или по OSPF. Работает вместе с любым VPN.</p>
+          <div class="table-scroll"><table class="compact">
+            <thead><tr><th>Имя</th><th>Состояние</th><th>Второй роутер</th><th>Адрес в GRE</th>
+              <th>Сети за ним</th><th>Трафик</th><th></th></tr></thead>
+            <tbody id="gre-list"></tbody>
+          </table></div>
+          <p id="gre-warn" class="error"></p>
+        </div>
+
+        <form id="gre-form" class="card form">
+          <h2 id="gre-form-title">Новый туннель</h2>
+          <label class="check"><input type="checkbox" name="enabled" checked> Включён</label>
+          <label class="row">Имя <input name="name" placeholder="gre1" required></label>
+          <label class="row">Комментарий <input name="comment" placeholder="офис 2"></label>
+          <h2>Снаружи туннеля</h2>
+          <label class="row">Второй роутер (remote) <input name="remote" placeholder="10.8.1.3" required></label>
+          <label class="row">Свой адрес (local) <input name="local" placeholder="пусто — по маршруту"></label>
+          <label class="row">Через интерфейс <select name="underlay"></select></label>
+          <p class="hint">Адреса — в AmneziaWG (у кого какой, видно в приложении Amnezia: список клиентов).
+            «Через интерфейс» awg0 добавит маршрут ко второму роутеру в туннель — нужно в режиме split; в full не помешает.</p>
+          <h2>Внутри туннеля</h2>
+          <label class="row">Адрес в GRE <input name="address" placeholder="172.16.0.1/30" required></label>
+          <label class="row">Сети за вторым роутером <input name="routes" placeholder="192.168.20.0/24, 192.168.21.0/24"></label>
+          <label class="row">MTU <input name="mtu" type="number" min="576" max="1476" value="1380"></label>
+          <label class="row">TTL <input name="ttl" type="number" min="1" max="255" value="64"></label>
+          <label class="check"><input type="checkbox" name="ospf"> OSPF через туннель (сети обменяются сами)</label>
+          <label class="row" data-gre-ospf>Область OSPF <input name="ospf_area" value="0.0.0.0"></label>
+          <label class="row" data-gre-ospf>Стоимость OSPF <input name="ospf_cost" type="number" min="1" max="65535" placeholder="авто"></label>
+          <p class="hint" data-gre-ospf>Туннель добавится в OSPF как point-to-point. Сеть LAN объявите в «Маршрутизация → OSPF»
+            (сеть 192.168.1.0/24, интерфейс br-lan пассивный) — на обоих роутерах.</p>
+          <p class="hint" id="gre-peer-hint"></p>
+          <div class="toolbar">
+            <button type="submit" id="gre-save">Добавить</button>
+            <button type="button" class="link" id="gre-cancel" hidden>Отмена</button>
+            <span id="gre-error" class="error"></span>
+            <span id="gre-ok" class="ok"></span>
           </div>
         </form>
       </div>
@@ -1368,8 +1415,8 @@
 
   </main>
 
-  <script src="js/i18n-dict.js?v=0.17.4"></script>
-  <script src="js/i18n.js?v=0.17.4"></script>
-  <script src="js/app.js?v=0.17.4"></script>
+  <script src="js/i18n-dict.js?v=0.18.0"></script>
+  <script src="js/i18n.js?v=0.18.0"></script>
+  <script src="js/app.js?v=0.18.0"></script>
 </body>
 </html>
