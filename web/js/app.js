@@ -1377,12 +1377,13 @@ async function loadFirewall() {
 
   if (fwTab === "forwards") {
     $("#pf-list").innerHTML = fwData.forwards.map((f) => `
-      <tr class="${f.enabled ? "" : "row-disabled"}"><td>${f.id}</td><td>${PROTO[f.protocol]}</td><td>${esc(f.wan_port)}</td>
+      <tr class="${f.enabled ? "" : "row-disabled"}"><td>${f.id}</td><td>${PROTO[f.protocol]}</td>
+        <td>${esc(I18N.t({ wan: "WAN", vpn: "VPN", any: "WAN и VPN" }[f.from_zone || "wan"]))}</td><td>${esc(f.wan_port)}</td>
         <td>${esc(f.to_ip)}</td><td>${f.to_port ?? esc(f.wan_port)}</td><td>${cidr(f.src)}</td>
         <td class="desc">${esc(f.description ?? "")}</td><td>${counter(f)}</td>
         <td class="actions"><button type="button" data-pf-edit="${f.id}">Изменить</button>
           <button type="button" data-pf-del="${f.id}" class="danger">Удалить</button></td></tr>`).join("")
-      || '<tr><td colspan="9" class="hint">пробросов нет</td></tr>';
+      || '<tr><td colspan="10" class="hint">пробросов нет</td></tr>';
     return;
   }
 
@@ -1476,7 +1477,7 @@ function openPfForm(fwd) {
   $("#pf-form-title").textContent = fwd ? `Проброс #${fwd.id} — изменить` : "Новый проброс";
   $("#pf-save").textContent = fwd ? "Сохранить" : "Добавить";
   const x = fwd ?? { protocol: "tcp", enabled: true };
-  f.protocol.value = x.protocol; f.wan_port.value = x.wan_port ?? ""; f.to_ip.value = x.to_ip ?? "";
+  f.protocol.value = x.protocol; f.from_zone.value = x.from_zone || "wan"; f.wan_port.value = x.wan_port ?? ""; f.to_ip.value = x.to_ip ?? "";
   f.to_port.value = x.to_port ?? ""; f.src.value = x.src ?? ""; f.description.value = x.description ?? "";
   f.enabled.checked = x.enabled;
   f.hidden = false;
@@ -1490,7 +1491,7 @@ $("#pf-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const f = ev.target;
   const body = {
-    protocol: f.protocol.value, wan_port: f.wan_port.value, to_ip: f.to_ip.value,
+    protocol: f.protocol.value, from_zone: f.from_zone.value, wan_port: f.wan_port.value, to_ip: f.to_ip.value,
     to_port: f.to_port.value ? Number(f.to_port.value) : null, src: f.src.value || null,
     description: f.description.value || null, enabled: f.enabled.checked,
   };

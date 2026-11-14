@@ -230,3 +230,22 @@ def test_management_through_tunnel():
     assert WgConfig.from_yaml(WgConfig(management=True).to_yaml()).management is True
     assert WgConfig.from_yaml({}).management is False
     assert L2tpConfig.from_yaml(L2tpConfig(management=True).to_yaml()).management is True
+
+
+def test_port_forward_from_tunnel():
+    """Проброс из VPN-туннеля: телефон через тот же сервер -> устройство в LAN (АТС, камера)."""
+    from app.models.firewall import PortForward
+    from app.services import firewall_rules as fr
+    vpn = firewall.VpnRules(iface="awg0", nat=True, killswitch=True, inbound=False)
+    sip = PortForward(protocol="udp", wan_port="5060", to_ip="192.168.1.50", from_zone="vpn")
+    web = PortForward(wan_port="8080", to_ip="192.168.1.60", to_port=80)
+    both = PortForward(protocol="tcp+udp", wan_port="10000-10100", to_ip="192.168.1.50", from_zone="any")
+    text = firewall.ruleset("enp1s0", "br-lan", False, vpn, forwards=[(1, sip), (2, web), (3, both)])
+    assert 'iifname "awg0" meta l4proto udp th dport 5060 counter dnat ip to 192.168.1.50 comment "fwd:1"' in text
+    assert 'iifname "enp1s0" meta l4proto tcp th dport 8080 counter dnat ip to 192.168.1.60:80 comment "fwd:2"' in text
+    assert 'iifname { "enp1s0", "awg0" } meta l4proto { tcp, udp } th dport 10000-10100' in text
+    no_vpn = firewall.ruleset("enp1s0", "br-lan", False, None, forwards=[(1, sip), (3, both)])
+    assert '"fwd:1"' not in no_vpn and 'iifname "enp1s0" meta l4proto { tcp, udp } th dport 10000-10100' in no_vpn
+    y = fr._to_yaml(sip, 1, fr._FWD_KEYS)
+    assert y["from"] == "vpn" and PortForward(**fr._from_yaml(y, fr._FWD_KEYS)).from_zone == "vpn"
+    assert PortForward(**fr._from_yaml({"id": 2, "wan-port": "80", "to-ip": "192.168.1.5"}, fr._FWD_KEYS)).from_zone == "wan"

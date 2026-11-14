@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>OutpostGate Pro</title>
-  <link rel="stylesheet" href="css/style.css?v=0.18.1">
+  <link rel="stylesheet" href="css/style.css?v=0.18.2">
 </head>
 <body>
   <!-- вход -->
@@ -972,7 +972,9 @@
       <!-- проброс портов -->
       <div id="fw-forwards-panel" hidden>
         <p class="hint">Порт на WAN-адресе роутера → устройство в LAN. Ответы устройства идут обратно автоматически.
-          В режиме VPN «весь трафик» проброс с WAN работать не будет — ответы уйдут в туннель.</p>
+          В режиме VPN «весь трафик» проброс с WAN работать не будет — ответы уйдут в туннель.
+          «Откуда: VPN-туннель» — порт на адресе роутера в туннеле (10.8.1.2): так телефон, подключённый к тому же VPN-серверу,
+          попадает на устройство в LAN (АТС, камеру, NAS). Устройство видит настоящий адрес телефона (10.8.1.x).</p>
         <div class="toolbar">
           <button type="button" id="pf-add">+ Добавить проброс</button>
           <span id="pf-error" class="error"></span>
@@ -983,7 +985,11 @@
             <label>Протокол
               <select name="protocol"><option value="tcp">TCP</option><option value="udp">UDP</option>
                 <option value="tcp+udp">TCP и UDP</option></select></label>
-            <label>Порт WAN <input name="wan_port" placeholder="8080 или 5060-5070" required></label>
+            <label>Откуда
+              <select name="from_zone"><option value="wan">WAN (интернет)</option>
+                <option value="vpn">VPN-туннель (телефон через тот же сервер)</option>
+                <option value="any">WAN и VPN</option></select></label>
+            <label>Порт на роутере <input name="wan_port" placeholder="8080 или 5060-5070" required></label>
             <label>IP устройства в LAN <input name="to_ip" placeholder="192.168.88.20" required></label>
             <label>Порт устройства <input name="to_port" type="number" min="1" max="65535" placeholder="тот же"></label>
             <label>Разрешённые источники CIDR <input name="src" placeholder="все (0.0.0.0/0)"></label>
@@ -996,7 +1002,7 @@
           </div>
         </form>
         <table class="compact fw-table">
-          <thead><tr><th>#</th><th>Протокол</th><th>Порт WAN</th><th>→ Устройство</th><th>Порт</th>
+          <thead><tr><th>#</th><th>Протокол</th><th>Откуда</th><th>Порт</th><th>→ Устройство</th><th>Порт</th>
             <th>Источник</th><th>Описание</th><th>Срабатывания</th><th></th></tr></thead>
           <tbody id="pf-list"></tbody>
         </table>
@@ -1419,8 +1425,8 @@
 
   </main>
 
-  <script src="js/i18n-dict.js?v=0.18.1"></script>
-  <script src="js/i18n.js?v=0.18.1"></script>
-  <script src="js/app.js?v=0.18.1"></script>
+  <script src="js/i18n-dict.js?v=0.18.2"></script>
+  <script src="js/i18n.js?v=0.18.2"></script>
+  <script src="js/app.js?v=0.18.2"></script>
 </body>
 </html>

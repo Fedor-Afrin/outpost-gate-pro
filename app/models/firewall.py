@@ -116,6 +116,9 @@ class PortForward(BaseModel):
     to_ip: str = Field(examples=["192.168.88.20"])
     to_port: int | None = Field(None, ge=1, le=65535, description="Пусто = тот же порт")
     src: str | None = Field(None, description="Разрешённые источники; пусто = все")
+    from_zone: Literal["wan", "vpn", "any"] = Field(
+        "wan", description="Откуда: wan — с адреса WAN; vpn — с адреса роутера в туннеле "
+                           "(телефон через тот же VPN-сервер); any — оба")
     description: str | None = Field(None, max_length=120)
 
     @field_validator("wan_port")
