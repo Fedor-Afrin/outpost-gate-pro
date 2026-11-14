@@ -1164,6 +1164,7 @@ function fillWgForm(c, privateKeySet) {
   f.querySelector(`input[name=mode][value=${c.mode}]`).checked = true;
   f.killswitch.checked = c.killswitch;
   f.nat.checked = c.nat;
+  f.management.checked = !!c.management;
   f.private_key.value = c.private_key ?? "";
   f.private_key.placeholder = privateKeySet ? "задан — пусто = не менять" : "";
   f.addresses.value = c.addresses.join(", ");
@@ -1247,6 +1248,7 @@ $("#wg-form").addEventListener("submit", async (ev) => {
       mode: f.querySelector("input[name=mode]:checked").value,
       killswitch: f.killswitch.checked,
       nat: f.nat.checked,
+      management: f.management.checked,
       private_key: f.private_key.value || null,
       addresses: splitList(f.addresses.value),
       dns: splitList(f.dns.value),
@@ -1277,6 +1279,7 @@ function fillL2tpForm(st) {
   f.querySelector(`input[name=mode][value=${c.mode}]`).checked = true;
   f.killswitch.checked = c.killswitch;
   f.nat.checked = c.nat;
+  f.management.checked = !!c.management;
   f.server.value = c.server ?? "";
   f.psk.value = "";
   f.psk.placeholder = st.psk_set ? "задан — пусто = не менять" : "";
@@ -1314,6 +1317,7 @@ $("#l2tp-form").addEventListener("submit", async (ev) => {
       mode: f.querySelector("input[name=mode]:checked").value,
       killswitch: f.killswitch.checked,
       nat: f.nat.checked,
+      management: f.management.checked,
       server: f.server.value || null,
       psk: f.psk.value || null,
       username: f.username.value || null,

@@ -133,6 +133,7 @@ window.I18N_DICT = {
      "במצב DHCP אפשר להשאיר את שדות ה-DNS ריקים — אז ישמשו שרתי ה-DNS של הספק."],
   "Применить": ["Apply", "החל"],
   "Применено": ["Applied", "הוחל"],
+  "Управление через туннель (веб, SSH, CLI и ping с телефона через тот же VPN)": ["Management through the tunnel (web, SSH, CLI and ping from a phone over the same VPN)", "ניהול דרך המנהרה (ווב, SSH, CLI ו-ping מטלפון דרך אותו VPN)"],
   "через {dev}": ["via {dev}", "דרך {dev}"],
   "поднят, нет маршрута через {dev}": ["up, no route via {dev}", "פעיל, אין נתיב דרך {dev}"],
   "{name}: OSPF выключен в «Маршрутизации» — галочка OSPF не действует": ["{name}: OSPF is disabled in \"Routing\" — the OSPF checkbox has no effect", "{name}: OSPF כבוי ב\"ניתוב\" — תיבת הסימון OSPF לא פועלת"],
@@ -264,9 +265,7 @@ window.I18N_DICT = {
   "Только сети компании (split tunnel)": ["Company networks only (split tunnel)", "רק רשתות החברה (split tunnel)"],
   "Kill switch: туннель упал — устройства LAN без интернета": ["Kill switch: if the tunnel drops, LAN devices lose internet", "Kill switch: אם המנהרה נופלת — מכשירי LAN בלי אינטרנט"],
   "NAT в туннель (сервер не знает сеть LAN)": ["NAT into the tunnel (server does not know the LAN network)", "NAT לתוך המנהרה (השרת לא מכיר את רשת ה-LAN)"],
-  "NAT нужен для обычного VPN-сервера, где у клиента один адрес. Выключите для site-to-site: тогда центр видит реальные адреса устройств LAN и может к ним подключаться (телефоны, удалённая помощь).":
-    ["NAT is needed for a regular VPN server where each client has one address. Turn it off for site-to-site: then the head office sees the real addresses of LAN devices and can connect to them (phones, remote assistance).",
-     "NAT נדרש לשרת VPN רגיל שבו ללקוח כתובת אחת. כבו אותו עבור site-to-site: אז המטה רואה את הכתובות האמיתיות של מכשירי ה-LAN ויכול להתחבר אליהם (טלפונים, עזרה מרחוק)."],
+  "NAT нужен для обычного VPN-сервера, где у клиента один адрес. Выключите для site-to-site: тогда центр видит реальные адреса устройств LAN и может к ним подключаться (телефоны, удалённая помощь). «Управление через туннель» открывает роутер по его адресу в туннеле (например, http://10.8.1.2:8000) другим клиентам того же сервера; в режиме split добавьте сеть туннеля (10.8.1.0/24) в сети компании — иначе ответы пойдут мимо туннеля.": ["NAT is needed for a regular VPN server where the client has one address. Turn it off for site-to-site: then the central site sees the real addresses of LAN devices and can connect to them (phones, remote support). \"Management through the tunnel\" opens the router at its tunnel address (e.g. http://10.8.1.2:8000) to other clients of the same server; in split mode add the tunnel network (10.8.1.0/24) to the company networks — otherwise replies bypass the tunnel.", "NAT נדרש לשרת VPN רגיל שבו ללקוח כתובת אחת. כבו אותו ל-site-to-site: אז המרכז רואה את הכתובות האמיתיות של מכשירי ה-LAN ויכול להתחבר אליהם (טלפונים, תמיכה מרחוק). \"ניהול דרך המנהרה\" פותח את הנתב בכתובת המנהרה שלו (למשל http://10.8.1.2:8000) ללקוחות אחרים של אותו שרת; במצב split הוסיפו את רשת המנהרה (10.8.1.0/24) לרשתות החברה — אחרת התשובות יעקפו את המנהרה."],
   "Интерфейс (роутер)": ["Interface (router)", "ממשק (נתב)"],
   "Сгенерировать ключи": ["Generate keys", "צור מפתחות"],
   "публичный ключ роутера отдайте администратору сервера": ["give the router's public key to the server administrator", "מסרו את המפתח הציבורי של הנתב למנהל השרת"],
