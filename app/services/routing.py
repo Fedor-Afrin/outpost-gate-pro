@@ -22,8 +22,8 @@ import threading
 from pathlib import Path
 
 from app.core.store import store
-from app.models.routing import (BgpPeerView, OspfNeighborView, RouteView, RoutingConfig,
-                                RoutingStatus)
+from app.models.routing import (BgpPeerView, OspfInterface, OspfNeighborView, OspfNetwork, RouteView,
+                                RoutingConfig, RoutingStatus)
 from app.services import netlink
 
 FRR_DIR = Path(os.getenv("FRR_DIR", "/etc/frr"))
@@ -256,9 +256,35 @@ def _frrinit(action: str) -> None:
         raise RoutingError(500, f"FRR {action}: {text[-400:] or f'код {rc}'}")
 
 
+def with_gre(cfg: RoutingConfig) -> RoutingConfig:
+    """Туннели GRE с галочкой OSPF: сеть туннеля — в OSPF, интерфейс — point-to-point.
+    То, что пользователь задал сам (интерфейс или сеть), не трогаем."""
+    if not cfg.ospf.enabled:
+        return cfg
+    try:
+        from app.services import gre
+        extra = gre.ospf_additions()
+    except Exception as e:  # noqa: BLE001
+        print(f"[routing] WARNING: GRE: {e}")
+        return cfg
+    if not extra:
+        return cfg
+    cfg = cfg.model_copy(deep=True)
+    names = {i.name for i in cfg.ospf.interfaces}
+    nets = {n.network for n in cfg.ospf.networks}
+    for t, net in extra:
+        if net not in nets:
+            cfg.ospf.networks.append(OspfNetwork(network=net, area=t.ospf_area))
+            nets.add(net)
+        if t.name not in names:
+            cfg.ospf.interfaces.append(OspfInterface(name=t.name, network_type="point-to-point", cost=t.ospf_cost))
+            names.add(t.name)
+    return cfg
+
+
 def apply(cfg: RoutingConfig | None = None) -> None:
     """Привести FRR к настройкам."""
-    cfg = cfg or get_config()
+    cfg = with_gre(cfg or get_config())
     with _lock:
         if not active(cfg):
             if running():
@@ -362,7 +388,7 @@ def stop() -> None:
 def ospf_interfaces(cfg: RoutingConfig | None = None) -> list[str]:
     """Интерфейсы, где OSPF ищет соседей: явно перечисленные (не пассивные)
     и все интерфейсы, адреса которых попадают в сети OSPF."""
-    cfg = cfg or get_config()
+    cfg = with_gre(cfg or get_config())
     o = cfg.ospf
     if not o.enabled:
         return []

@@ -174,6 +174,8 @@ def validate_config(data) -> None:
         WgConfig.from_yaml(vpn.get("wireguard"))
         WgConfig.from_yaml(vpn.get("amneziawg"))
         L2tpConfig.from_yaml(vpn.get("l2tp"))
+        from app.models.gre import GreConfig
+        GreConfig.from_yaml(data.get("gre"))
         fw = data.get("firewall") or {}
         for d in fw.get("rules") or []:
             firewall_rules.FirewallRule(**firewall_rules._from_yaml(d, firewall_rules._RULE_KEYS))

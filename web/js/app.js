@@ -1112,7 +1112,7 @@ $("#mount-form").addEventListener("submit", async (ev) => {
 let vpnKind = "wireguard";
 let wgFormLoaded = false;
 let l2tpFormLoaded = false;
-const VPN_NAMES = { wireguard: "WireGuard", amneziawg: "AmneziaWG", l2tp: "L2TP/IPsec" };
+const VPN_NAMES = { wireguard: "WireGuard", amneziawg: "AmneziaWG", l2tp: "L2TP/IPsec", gre: "GRE" };
 const splitList = (v) => v.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
 
 function selectVpnTab(kind) {
@@ -1120,10 +1120,11 @@ function selectVpnTab(kind) {
   wgFormLoaded = false;
   l2tpFormLoaded = false;
   document.querySelectorAll("#vpn-tabs .tab").forEach((t) => t.classList.toggle("active", t.dataset.kind === kind));
-  $("#wg-panel").hidden = kind === "l2tp";
+  $("#wg-panel").hidden = kind === "l2tp" || kind === "gre";
   $("#l2tp-panel").hidden = kind !== "l2tp";
+  $("#gre-panel").hidden = kind !== "gre";
   $("#awg-obf").hidden = kind !== "amneziawg";
-  ["#wg-error", "#wg-ok", "#wg-parse-msg", "#l2tp-error", "#l2tp-ok"].forEach((id) => { $(id).textContent = ""; });
+  ["#wg-error", "#wg-ok", "#wg-parse-msg", "#l2tp-error", "#l2tp-ok", "#gre-error", "#gre-ok"].forEach((id) => { $(id).textContent = ""; });
   loadVpn().catch(console.error);
 }
 
@@ -1137,9 +1138,12 @@ async function loadVpn() {
   document.querySelectorAll("#vpn-tabs .tab").forEach((t) => {
     t.textContent = VPN_NAMES[t.dataset.kind] + (sum.enabled === t.dataset.kind ? " ●" : "");
   });
-  $("#vpn-active-hint").textContent = sum.enabled
-    ? `Сейчас включён: ${VPN_NAMES[sum.enabled]}. Одновременно работает один туннель — включение другого выключит этот.`
-    : "Туннель не включён. Одновременно работает один туннель.";
+  $("#vpn-active-hint").textContent = vpnKind === "gre"
+    ? "GRE работает вместе с включённым VPN: туннели GRE идут поверх него ко вторым роутерам."
+    : sum.enabled
+      ? `Сейчас включён: ${VPN_NAMES[sum.enabled]}. Одновременно работает один туннель — включение другого выключит этот.`
+      : "Туннель не включён. Одновременно работает один туннель.";
+  if (vpnKind === "gre") return loadGre();
   return vpnKind === "l2tp" ? loadL2tp() : loadWg();
 }
 
@@ -1207,7 +1211,17 @@ $("#wg-parse").addEventListener("click", async () => {
   $("#wg-parse-msg").textContent = "";
   $("#wg-error").textContent = "";
   try {
-    const c = await api("POST", `/api/vpn/${vpnKind}/parse`, { text: $("#wg-import").value });
+    let c;
+    try {
+      c = await api("POST", `/api/vpn/${vpnKind}/parse`, { text: $("#wg-import").value });
+    } catch (e) {
+      if (vpnKind !== "wireguard" || !/AmneziaWG/.test(e.message)) throw e;
+      const text = $("#wg-import").value;           // конфиг AmneziaWG на вкладке WireGuard — перейти сами
+      selectVpnTab("amneziawg");
+      await new Promise((ok) => setTimeout(ok, 300));
+      $("#wg-import").value = text;
+      c = await api("POST", "/api/vpn/amneziawg/parse", { text });
+    }
     c.enabled = true;
     fillWgForm(c, false);
     $("#wg-parse-msg").textContent = "Поля заполнены — проверьте и нажмите «Применить»";
@@ -2855,3 +2869,128 @@ $("#safe-rollback").addEventListener("click", async () => {
 $("#safe-event").addEventListener("click", () => { $("#safe-event").hidden = true; });
 
 checkAuth().catch((e) => { console.error(e); showLogin(); });
+
+
+// ---------------------------------------------------------------- VPN: GRE
+let greData = null;
+let greEdit = null;                  // имя редактируемого туннеля; null — новый
+
+async function loadGre() {
+  greData = await api("GET", "/api/gre");
+  renderGre();
+  if (greEdit === null && !$("#gre-form").dataset.touched) greFill(null);
+}
+
+function renderGre() {
+  const st = Object.fromEntries(greData.tunnels.map((t) => [t.name, t]));
+  $("#gre-list").innerHTML = greData.config.tunnels.map((t) => {
+    const s = st[t.name] || {};
+    const state = !t.enabled ? '<span class="muted">выключен</span>'
+      : s.error ? `<span class="error">${esc(s.error)}</span>`
+      : s.up ? (s.underlay_ok === false
+        ? `<span class="warn">${esc(I18N.t("поднят, нет маршрута через {dev}", { dev: t.underlay }))}</span>`
+        : `● ${esc(I18N.t("поднят"))}`)
+      : "не поднят";
+    return `<tr><td>${esc(t.name)}${t.comment ? `<br><span class="hint">${esc(t.comment)}</span>` : ""}</td><td>${state}</td>
+      <td>${esc(t.remote)}<br><span class="hint">${t.local ? `${esc(I18N.t("свой"))} ${esc(t.local)}, ` : ""}${
+        esc(t.underlay ? I18N.t("через {dev}", { dev: t.underlay }) : I18N.t("по таблице маршрутов"))}</span></td>
+      <td>${esc(t.address)}<br><span class="hint">${esc(I18N.t("у второго:"))} ${esc(s.peer_hint || "")}${
+        t.ospf ? `<br>OSPF ${esc(t.ospf_area)}` : ""}</span></td>
+      <td>${t.routes.map(esc).join("<br>") || "—"}</td>
+      <td class="nowrap">${s.exists ? `↓ ${fmt(s.rx_bytes)}<br>↑ ${fmt(s.tx_bytes)}` : "—"}</td>
+      <td class="actions"><button type="button" class="link" data-gre-edit="${esc(t.name)}">изменить</button>
+        <button type="button" class="link" data-gre-toggle="${esc(t.name)}">${t.enabled ? "выключить" : "включить"}</button>
+        <button type="button" class="danger" data-gre-del="${esc(t.name)}" title="удалить">×</button></td></tr>`;
+  }).join("") || '<tr><td colspan="7" class="hint">туннелей нет — добавьте ниже</td></tr>';
+  $("#gre-warn").textContent = greData.ospf_enabled ? "" : greData.config.tunnels.filter((t) => t.ospf && t.enabled)
+    .map((t) => I18N.t("{name}: OSPF выключен в «Маршрутизации» — галочка OSPF не действует", { name: t.name })).join("; ");
+}
+
+function greOspfShown() {
+  const on = $("#gre-form").ospf.checked;
+  document.querySelectorAll("[data-gre-ospf]").forEach((el) => { el.hidden = !on; });
+}
+
+function greNextName() {
+  const used = new Set(greData.config.tunnels.map((t) => t.name));
+  for (let i = 1; i < 100; i++) if (!used.has(`gre${i}`)) return `gre${i}`;
+  return "";
+}
+
+function greFill(t) {
+  const f = $("#gre-form");
+  greEdit = t ? t.name : null;
+  delete f.dataset.touched;
+  const ifs = greData.interfaces;
+  f.underlay.innerHTML = '<option value="">по таблице маршрутов</option>'
+    + [...new Set([...(t?.underlay ? [t.underlay] : []), ...ifs])].map((n) => `<option>${esc(n)}</option>`).join("");
+  f.enabled.checked = t ? t.enabled : true;
+  f.name.value = t ? t.name : greNextName();
+  f.name.readOnly = !!t;
+  for (const k of ["comment", "remote", "local", "address", "ospf_cost"]) f[k].value = t?.[k] ?? "";
+  f.underlay.value = t ? (t.underlay || "") : (ifs.find((n) => n.startsWith("awg")) || ifs.find((n) => n.startsWith("wg")) || "");
+  f.routes.value = (t?.routes || []).join(", ");
+  f.mtu.value = t?.mtu ?? 1380;
+  f.ttl.value = t?.ttl ?? 64;
+  f.ospf.checked = !!t?.ospf;
+  f.ospf_area.value = t?.ospf_area ?? "0.0.0.0";
+  greOspfShown();
+  $("#gre-form-title").textContent = t ? I18N.t("Изменить туннель {name}", { name: t.name }) : "Новый туннель";
+  $("#gre-save").textContent = t ? "Сохранить" : "Добавить";
+  $("#gre-cancel").hidden = !t;
+  const s = t && greData.tunnels.find((x) => x.name === t.name);
+  $("#gre-peer-hint").textContent = t
+    ? I18N.t("На втором роутере: второй роутер = {local}, адрес в GRE = {peer}, сети за ним — ваши сети LAN.",
+        { local: t.local || I18N.t("ваш адрес в AmneziaWG"), peer: s?.peer_hint || "" })
+    : "";
+  $("#gre-error").textContent = "";
+}
+
+async function greSave(tunnels, okText) {
+  $("#gre-error").textContent = "";
+  $("#gre-ok").textContent = "";
+  try {
+    greData = await api("PUT", "/api/gre", { tunnels });
+    renderGre();
+    $("#gre-ok").textContent = okText || "Применено";
+    return true;
+  } catch (e) {
+    $("#gre-error").textContent = e.message;
+    return false;
+  }
+}
+
+$("#gre-form").addEventListener("input", () => { $("#gre-form").dataset.touched = "1"; });
+$("#gre-form").ospf.addEventListener("change", greOspfShown);
+$("#gre-cancel").addEventListener("click", () => greFill(null));
+
+$("#gre-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const f = ev.target;
+  const t = {
+    name: f.name.value.trim(), enabled: f.enabled.checked, comment: opt(f.comment.value.trim()),
+    remote: f.remote.value.trim(), local: opt(f.local.value.trim()), underlay: opt(f.underlay.value),
+    address: f.address.value.trim(), routes: splitList(f.routes.value),
+    mtu: num(f.mtu.value) ?? 1380, ttl: num(f.ttl.value) ?? 64,
+    ospf: f.ospf.checked, ospf_area: f.ospf_area.value.trim() || "0.0.0.0", ospf_cost: num(f.ospf_cost.value),
+  };
+  const list = greData.config.tunnels.filter((x) => x.name !== (greEdit ?? t.name));
+  const idx = greData.config.tunnels.findIndex((x) => x.name === greEdit);
+  if (idx >= 0) list.splice(idx, 0, t); else list.push(t);
+  if (await greSave(list)) greFill(greData.config.tunnels.find((x) => x.name === t.name));
+});
+
+$("#gre-list").addEventListener("click", async (ev) => {
+  const b = ev.target.closest("button");
+  if (!b) return;
+  const all = greData.config.tunnels;
+  if (b.dataset.greEdit) {
+    greFill(all.find((t) => t.name === b.dataset.greEdit));
+    $("#gre-form").scrollIntoView({ block: "nearest" });
+  } else if (b.dataset.greToggle) {
+    await greSave(all.map((t) => (t.name === b.dataset.greToggle ? { ...t, enabled: !t.enabled } : t)));
+  } else if (b.dataset.greDel) {
+    if (!confirm(I18N.t("Удалить туннель {name}?", { name: b.dataset.greDel }))) return;
+    if (await greSave(all.filter((t) => t.name !== b.dataset.greDel)) && greEdit === b.dataset.greDel) greFill(null);
+  }
+});
