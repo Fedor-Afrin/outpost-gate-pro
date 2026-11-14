@@ -210,3 +210,23 @@ def test_split_tunnel_allowed_ips(monkeypatch):
     covered = WgConfig(mode="split", allowed_ips=["10.8.1.0/24"])
     assert vpn.allowed_ips(covered, "awg0") == ["10.8.1.0/24"]
     assert vpn.allowed_ips(WgConfig(mode="full"), "awg0") == ["0.0.0.0/0"]
+
+
+def test_management_through_tunnel():
+    """Галочка «управление через туннель»: при NAT из awg0 пускаются порты управления и ping, остальное — drop."""
+    from app.models.l2tp import L2tpConfig
+    from app.models.wireguard import WgConfig
+    on = firewall.VpnRules(iface="awg0", nat=True, killswitch=True, inbound=False, management=True)
+    text = firewall.ruleset("enp1s0", "br-lan", False, on)
+    inp = text[text.index("chain input"):text.index("chain forward")]
+    mgmt = ", ".join(str(p) for p in firewall.management_ports())
+    assert inp.index(f'iifname "awg0" tcp dport {{ {mgmt} }} accept') < inp.index('iifname "awg0" drop')
+    assert 'iifname "awg0" icmp type echo-request accept' in inp
+    off = firewall.VpnRules(iface="awg0", nat=True, killswitch=True, inbound=False)
+    assert "управление через туннель" not in firewall.ruleset("enp1s0", "br-lan", False, off)
+    site = firewall.VpnRules(iface="awg0", nat=False, killswitch=False, inbound=True, management=True)
+    assert 'iifname "awg0" drop' not in firewall.ruleset("enp1s0", "br-lan", False, site)   # site-to-site: и так открыто
+    assert any("управление (порты" in x for x in firewall.system_rules("enp1s0", False, on)["input"])
+    assert WgConfig.from_yaml(WgConfig(management=True).to_yaml()).management is True
+    assert WgConfig.from_yaml({}).management is False
+    assert L2tpConfig.from_yaml(L2tpConfig(management=True).to_yaml()).management is True

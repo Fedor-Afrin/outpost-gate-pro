@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>OutpostGate Pro</title>
-  <link rel="stylesheet" href="css/style.css?v=0.18.0">
+  <link rel="stylesheet" href="css/style.css?v=0.18.1">
 </head>
 <body>
   <!-- вход -->
@@ -775,8 +775,11 @@
         </fieldset>
         <label class="check"><input type="checkbox" name="killswitch"> Kill switch: туннель упал — устройства LAN без интернета</label>
         <label class="check"><input type="checkbox" name="nat"> NAT в туннель (сервер не знает сеть LAN)</label>
+        <label class="check"><input type="checkbox" name="management"> Управление через туннель (веб, SSH, CLI и ping с телефона через тот же VPN)</label>
         <p class="hint">NAT нужен для обычного VPN-сервера, где у клиента один адрес. Выключите для site-to-site:
-          тогда центр видит реальные адреса устройств LAN и может к ним подключаться (телефоны, удалённая помощь).</p>
+          тогда центр видит реальные адреса устройств LAN и может к ним подключаться (телефоны, удалённая помощь).
+          «Управление через туннель» открывает роутер по его адресу в туннеле (например, http://10.8.1.2:8000) другим клиентам того же сервера;
+          в режиме split добавьте сеть туннеля (10.8.1.0/24) в сети компании — иначе ответы пойдут мимо туннеля.</p>
 
         <h2>Интерфейс (роутер)</h2>
         <label class="row">PrivateKey <input name="private_key" type="password" autocomplete="off"></label>
@@ -830,6 +833,7 @@
           </fieldset>
           <label class="check"><input type="checkbox" name="killswitch"> Kill switch: туннель упал — устройства LAN без интернета</label>
           <label class="check"><input type="checkbox" name="nat"> NAT в туннель (сервер не знает сеть LAN)</label>
+          <label class="check"><input type="checkbox" name="management"> Управление через туннель (веб, SSH, CLI и ping с телефона через тот же VPN)</label>
 
           <h2>Подключение</h2>
           <label class="row">Сервер <input name="server" placeholder="vpn.example.com"></label>
@@ -1415,8 +1419,8 @@
 
   </main>
 
-  <script src="js/i18n-dict.js?v=0.18.0"></script>
-  <script src="js/i18n.js?v=0.18.0"></script>
-  <script src="js/app.js?v=0.18.0"></script>
+  <script src="js/i18n-dict.js?v=0.18.1"></script>
+  <script src="js/i18n.js?v=0.18.1"></script>
+  <script src="js/app.js?v=0.18.1"></script>
 </body>
 </html>

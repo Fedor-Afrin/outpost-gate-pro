@@ -43,6 +43,7 @@ class VpnRules:
     killswitch: bool      # LAN → WAN напрямую запрещено (весь трафик только в туннель)
     inbound: bool         # из туннеля можно заходить в LAN и на роутер (site-to-site)
     ipsec_server: str | None = None   # L2TP/IPsec: впустить с WAN IKE, ESP и L2TP от этого сервера
+    management: bool = False          # из туннеля можно на роутер: веб, SSH, CLI, ping (при NAT)
 
 
 @dataclass
@@ -202,8 +203,12 @@ def ruleset(wan: str, lan, wan_management: bool, vpn: VpnRules | None = None,
 
     mgmt = ", ".join(str(p) for p in management_ports())
     mgmt_rule = f'{I}tcp dport {{ {mgmt} }} accept   # управление с WAN (веб, SSH)\n' if wan_management else ""
-    input_vpn = f'{I}iifname "{vpn.iface}" drop            # из туннеля — только ответы\n' \
-        if vpn and not vpn.inbound else ""
+    input_vpn = ""
+    if vpn and not vpn.inbound:
+        if vpn.management:
+            input_vpn += (f'{I}iifname "{vpn.iface}" tcp dport {{ {mgmt} }} accept   # управление через туннель\n'
+                          f'{I}iifname "{vpn.iface}" icmp type echo-request accept\n')
+        input_vpn += f'{I}iifname "{vpn.iface}" drop            # из туннеля — только ответы\n'
     ipsec_rules = ""
     if vpn and vpn.ipsec_server:
         srv = vpn.ipsec_server
@@ -289,7 +294,8 @@ def system_rules(wan: str | None, wan_management: bool, vpn: VpnRules | None,
            "Из LAN — разрешено всё"]
     if vpn:
         inp.append(f"Из VPN ({vpn.iface}) — " + ("разрешено всё (site-to-site)" if vpn.inbound
-                                                 else "только ответы (режим NAT)"))
+                                                 else f"управление (порты {mgmt}) и ping, остальное — только ответы"
+                                                 if vpn.management else "только ответы (режим NAT)"))
     if gre:
         inp.append(f"GRE от {', '.join(gre.remotes)} — разрешён; из туннелей {', '.join(gre.ifaces)} — всё")
     if routing and routing.ospf_ifaces:
