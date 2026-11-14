@@ -108,6 +108,7 @@ def firewall_rules() -> firewall.VpnRules | None:
         killswitch=cfg.killswitch and cfg.mode == "full",
         inbound=not cfg.nat,
         ipsec_server=st.get("endpoint_ip") if kind == "l2tp" and st.get("kind") == "l2tp" else None,
+        management=cfg.management,
     )
 
 

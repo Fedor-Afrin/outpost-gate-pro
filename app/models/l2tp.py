@@ -23,6 +23,7 @@ class L2tpConfig(BaseModel):
                                 examples=[["192.168.10.0/24"]])
     nat: bool = True
     killswitch: bool = True
+    management: bool = False      # пускать к роутеру из туннеля (веб, SSH, CLI, ping)
     mtu: int = Field(1400, ge=1280, le=1460)
 
     @field_validator("server")
@@ -69,7 +70,8 @@ class L2tpConfig(BaseModel):
     def to_yaml(self) -> dict:
         return {"enabled": self.enabled, "server": self.server, "psk": self.psk,
                 "username": self.username, "password": self.password, "mode": self.mode,
-                "networks": self.networks, "nat": self.nat, "killswitch": self.killswitch, "mtu": self.mtu}
+                "networks": self.networks, "nat": self.nat, "killswitch": self.killswitch, "mtu": self.mtu,
+                "management": self.management}
 
     @classmethod
     def from_yaml(cls, d: dict | None) -> "L2tpConfig":

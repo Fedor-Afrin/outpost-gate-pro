@@ -184,7 +184,7 @@ def export_text(data: dict, *, show_sensitive: bool = False, version: str = "", 
         c = WgConfig.from_yaml(vpn.get(kind))
         o.menu(path, [line("set", ("disabled", not c.enabled), ("private-key", sec(c.private_key)),
                            ("address", c.addresses), ("dns", c.dns), ("mtu", c.mtu), ("mode", c.mode),
-                           ("nat", c.nat), ("killswitch", c.killswitch))])
+                           ("nat", c.nat), ("killswitch", c.killswitch), ("management", c.management))])
         o.menu(path + " peers", [line("set", ("public-key", c.peer_public_key), ("preshared-key", sec(c.preshared_key)),
                                       ("endpoint", c.endpoint), ("allowed-address", c.allowed_ips),
                                       ("persistent-keepalive", c.keepalive))])
@@ -194,7 +194,7 @@ def export_text(data: dict, *, show_sensitive: bool = False, version: str = "", 
                                                ("ipsec-secret", sec(c.psk)), ("user", c.username),
                                                ("password", sec(c.password)), ("mode", c.mode),
                                                ("networks", c.networks), ("nat", c.nat), ("killswitch", c.killswitch),
-                                               ("mtu", c.mtu))])
+                                               ("management", c.management), ("mtu", c.mtu))])
 
     if (data.get("gre") or {}).get("tunnels"):
         from app.models.gre import GreConfig
