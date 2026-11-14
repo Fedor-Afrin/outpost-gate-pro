@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>OutpostGate Pro</title>
-  <link rel="stylesheet" href="css/style.css?v=0.17.3">
+  <link rel="stylesheet" href="css/style.css?v=0.17.4">
 </head>
 <body>
   <!-- вход -->
@@ -755,10 +755,10 @@
 
       <div class="card">
         <h2>Импорт конфига</h2>
-        <p class="hint">Вставьте содержимое .conf от администратора сервера или выберите файл — поля ниже заполнятся сами.</p>
+        <p class="hint">Вставьте содержимое .conf или ссылку vpn:// из приложения Amnezia (или выберите файл .conf / .vpn) — поля ниже заполнятся сами.</p>
         <textarea id="wg-import" rows="6" placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = 10.8.0.2/32&#10;&#10;[Peer]&#10;PublicKey = ...&#10;Endpoint = vpn.example.com:51820&#10;AllowedIPs = 0.0.0.0/0"></textarea>
         <div class="toolbar">
-          <input type="file" id="wg-file" accept=".conf,text/plain">
+          <input type="file" id="wg-file" accept=".conf,.vpn,text/plain">
           <button type="button" id="wg-parse">Разобрать</button>
           <span id="wg-parse-msg" class="ok"></span>
         </div>
@@ -794,7 +794,7 @@
 
         <div id="awg-obf" hidden>
           <h2>Обфускация AmneziaWG</h2>
-          <p class="hint">Параметры Jc, Jmin, Jmax, S1–S4, H1–H4, I1–I5 — по одному «Имя = значение» в строке.
+          <p class="hint">Параметры Jc, Jmin, Jmax, S1–S4, H1–H4, I1–I5, а для AmneziaWG 3 — HeaderProtectionKey, RandomTrailers, DisableCookies, тайминги — по одному «Имя = значение» в строке.
             Должны совпадать с сервером; при импорте конфига заполняются сами.</p>
           <textarea name="obfuscation" rows="6" placeholder="Jc = 4&#10;Jmin = 40&#10;Jmax = 70&#10;S1 = 0&#10;S2 = 0&#10;H1 = 1&#10;H2 = 2&#10;H3 = 3&#10;H4 = 4"></textarea>
         </div>
@@ -1368,8 +1368,8 @@
 
   </main>
 
-  <script src="js/i18n-dict.js?v=0.17.3"></script>
-  <script src="js/i18n.js?v=0.17.3"></script>
-  <script src="js/app.js?v=0.17.3"></script>
+  <script src="js/i18n-dict.js?v=0.17.4"></script>
+  <script src="js/i18n.js?v=0.17.4"></script>
+  <script src="js/app.js?v=0.17.4"></script>
 </body>
 </html>

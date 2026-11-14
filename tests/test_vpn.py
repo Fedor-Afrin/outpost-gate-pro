@@ -264,3 +264,91 @@ def test_l2tp_keeps_secrets_and_validates(env):
 def test_l2tp_firewall_rules_valid():
     rs = firewall.ruleset("eth1", "br-lan", False, firewall.VpnRules("l2tp0", True, True, False, "203.0.113.9"))
     assert "ip saddr 203.0.113.9 ip protocol esp accept" in rs
+
+
+# --- импорт vpn:// из приложения Amnezia (AmneziaWG 3.1) ---------------------------------------
+import base64 as _b64
+import json as _json
+import zlib as _zlib
+
+_K1 = "yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk="
+_K2 = "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg="
+_K3 = "HIgo9xNzJMWLKASShiTqIybxZ0U3wGLiUeJ1PKf8ykw="
+
+
+def _vpn_link(conf: str, container="amnezia-awg2", **extra) -> str:
+    inner = {"config": conf, "port": "49513"}
+    j = {"containers": [{"container": "amnezia-openvpn", "openvpn": {}},
+                        {"container": container, "awg": {"last_config": _json.dumps(inner), "port": "49513"}}],
+         "defaultContainer": container, "dns1": "1.1.1.1", "dns2": "1.0.0.1", "hostName": "203.0.113.5", **extra}
+    data = _json.dumps(j).encode()
+    raw = len(data).to_bytes(4, "big") + _zlib.compress(data)
+    return "vpn://" + _b64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+AWG31 = f"""[Interface]
+Address = 10.8.1.2/32
+DNS = $PRIMARY_DNS, $SECONDARY_DNS
+PrivateKey = {_K1}
+Jc = 5
+Jmin = 10
+Jmax = 50
+S1 = 12
+S2 = 12
+S3 = 12
+S4 = 12
+H1 = 1
+H2 = 2
+H3 = 3
+H4 = 4
+I1 =
+HeaderProtectionKey = {_K3}
+RekeyAfterTime = 100-120
+RekeyTimeout = 3-7
+RejectAfterTime = 150-180
+KeepaliveTimeout = 5-15
+MaxHandshakeAttempts = 15-20
+RandomTrailers = on
+DisableCookies = on
+
+[Peer]
+PublicKey = {_K2}
+PresharedKey = {_K3}
+AllowedIPs = 0.0.0.0/0, ::/0
+Endpoint = 203.0.113.5:49513
+PersistentKeepalive = 25-35
+"""
+
+
+def test_import_amnezia_vpn_link():
+    from app.models.wireguard import parse_wg_quick
+    link = _vpn_link(AWG31)
+    c = parse_wg_quick("  " + link[:40] + "\n" + link[40:] + "\n")      # перенос строки внутри — не мешает
+    assert c.addresses == ["10.8.1.2/32"] and c.dns == ["1.1.1.1", "1.0.0.1"]
+    assert c.endpoint == "203.0.113.5:49513" and c.private_key == _K1 and c.peer_public_key == _K2
+    assert c.keepalive == 25 and c.mode == "full"
+    o = c.obfuscation
+    assert o["HeaderProtectionKey"] == _K3 and o["RandomTrailers"] == "on" and o["DisableCookies"] == "on"
+    assert o["RekeyAfterTime"] == "100-120" and o["S3"] == "12" and o["Jc"] == "5" and "I1" not in o
+    # в конфиг для awg setconf уходят и параметры AmneziaWG 3
+    from app.services import vpn
+    text = vpn.wg_conf(c, "203.0.113.5", obfuscation=True)
+    assert "HeaderProtectionKey = " in text and "MaxHandshakeAttempts = 15-20" in text
+
+
+def test_import_vpn_link_errors():
+    from app.models.wireguard import parse_wg_quick
+    with pytest.raises(ValueError, match="base64|JSON"):
+        parse_wg_quick("vpn://%%%not-base64")
+    j = _json.dumps({"containers": [{"container": "amnezia-openvpn"}]}).encode()
+    link = "vpn://" + _b64.urlsafe_b64encode(len(j).to_bytes(4, "big") + _zlib.compress(j)).decode()
+    with pytest.raises(ValueError, match="amnezia-openvpn"):
+        parse_wg_quick(link)
+
+
+def test_awg3_keys_canonical():
+    from app.models.wireguard import WgConfig
+    c = WgConfig(obfuscation={"headerprotectionkey": _K3, "randomtrailers": "on", "jc": "4", "s3": "20"})
+    assert c.obfuscation == {"HeaderProtectionKey": _K3, "RandomTrailers": "on", "Jc": "4", "S3": "20"}
+    with pytest.raises(ValueError, match="неизвестный параметр"):
+        WgConfig(obfuscation={"Bogus": "1"})
