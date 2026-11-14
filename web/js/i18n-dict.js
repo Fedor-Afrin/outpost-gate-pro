@@ -220,9 +220,7 @@ window.I18N_DICT = {
   "Туннель не включён. Одновременно работает один туннель.": ["No tunnel is enabled. Only one tunnel runs at a time.", "אין מנהרה פעילה. רק מנהרה אחת פועלת בכל רגע."],
   "Ключ роутера": ["Router key", "מפתח הנתב"],
   "Импорт конфига": ["Import config", "ייבוא קובץ תצורה"],
-  "Вставьте содержимое .conf от администратора сервера или выберите файл — поля ниже заполнятся сами.":
-    ["Paste the .conf contents from the server administrator or choose a file — the fields below fill in automatically.",
-     "הדביקו את תוכן קובץ ה-.conf ממנהל השרת או בחרו קובץ — השדות למטה יתמלאו אוטומטית."],
+  "Вставьте содержимое .conf или ссылку vpn:// из приложения Amnezia (или выберите файл .conf / .vpn) — поля ниже заполнятся сами.": ["Paste the contents of a .conf or a vpn:// link from the Amnezia app (or choose a .conf / .vpn file) — the fields below fill in automatically.", "הדבק את תוכן קובץ ה-.conf או קישור vpn:// מאפליקציית Amnezia (או בחר קובץ .conf / .vpn) — השדות למטה יתמלאו אוטומטית."],
   "Разобрать": ["Parse", "פענח"],
   "Поля заполнены — проверьте и нажмите «Применить»": ["Fields filled in — check them and press “Apply”", "השדות מולאו — בדקו ולחצו „החל”"],
   "Включить туннель": ["Enable tunnel", "הפעל מנהרה"],
@@ -242,9 +240,7 @@ window.I18N_DICT = {
   "AllowedIPs (сети компании)": ["AllowedIPs (company networks)", "AllowedIPs (רשתות החברה)"],
   "PersistentKeepalive, с": ["PersistentKeepalive, s", "PersistentKeepalive, שנ׳"],
   "Обфускация AmneziaWG": ["AmneziaWG obfuscation", "הסוואת AmneziaWG"],
-  "Параметры Jc, Jmin, Jmax, S1–S4, H1–H4, I1–I5 — по одному «Имя = значение» в строке. Должны совпадать с сервером; при импорте конфига заполняются сами.":
-    ["Parameters Jc, Jmin, Jmax, S1–S4, H1–H4, I1–I5 — one “Name = value” per line. They must match the server; importing a config fills them in automatically.",
-     "הפרמטרים Jc, Jmin, Jmax, S1–S4, H1–H4, I1–I5 — „שם = ערך” אחד בכל שורה. חייבים להתאים לשרת; בייבוא קובץ תצורה הם מתמלאים אוטומטית."],
+  "Параметры Jc, Jmin, Jmax, S1–S4, H1–H4, I1–I5, а для AmneziaWG 3 — HeaderProtectionKey, RandomTrailers, DisableCookies, тайминги — по одному «Имя = значение» в строке. Должны совпадать с сервером; при импорте конфига заполняются сами.": ["Parameters Jc, Jmin, Jmax, S1–S4, H1–H4, I1–I5, and for AmneziaWG 3 — HeaderProtectionKey, RandomTrailers, DisableCookies, timings — one \"Name = value\" per line. Must match the server; filled in automatically on import.", "פרמטרים Jc, Jmin, Jmax, S1–S4, H1–H4, I1–I5, ועבור AmneziaWG 3 — HeaderProtectionKey, RandomTrailers, DisableCookies, תזמונים — שורה אחת \"שם = ערך\" לכל פרמטר. חייבים להתאים לשרת; ממולאים אוטומטית בייבוא."],
   "Подключение": ["Connection", "חיבור"],
   "Сети компании (split)": ["Company networks (split)", "רשתות החברה (split)"],
   "L2TP/IPsec (IKEv1, PSK) — для совместимости с серверами MikroTik, Windows, Cisco. Там, где VPN блокируют, используйте AmneziaWG.":
