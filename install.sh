@@ -502,8 +502,14 @@ EOF
 
 build_image() {
     say "Собираю образ (первый раз — несколько минут)"
-    "${COMPOSE[@]}" build
+    docker_build
     ok "образ $IMAGE готов"
+}
+
+docker_build() {
+    # Сборка — в сети самого сервера (--network host): у Docker с iptables=false нет NAT для временных
+    # контейнеров сборки, и они не достучались бы до github.com / deb.debian.org
+    docker build --network host -t "$IMAGE" "$ROOT"
 }
 
 write_config() {
@@ -646,7 +652,7 @@ do_update() {
     docker_forward_open
     host_dns
     say "Обновляю: пересборка образа и перезапуск"
-    "${COMPOSE[@]}" build
+    docker_build
     "${COMPOSE[@]}" up -d --force-recreate
     wait_healthy "$API_PORT" && ok "роутер работает" || die "роутер не ответил — docker logs $CONTAINER"
     docker image prune -f >/dev/null 2>&1 || true
