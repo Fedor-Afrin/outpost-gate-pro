@@ -390,6 +390,11 @@ class Collector:
                 self.collect()
             except Exception as e:  # noqa: BLE001
                 print(f"[monitor] ERROR: {e}")
+            try:
+                from app.services import dhcp
+                dhcp.watch_interfaces()                  # Kea после пересоздания мостов
+            except Exception as e:  # noqa: BLE001
+                print(f"[dhcp] ERROR: {e}")
             if time.time() - self._last_save > SAVE_EVERY:
                 self.save()
             self._stop.wait(max(1.0, INTERVAL - (time.time() - started)))
