@@ -8,7 +8,9 @@
 name: outpost-gate-pro-host   # не путать с dev-запуском (docker-compose.yml в корне)
 services:
   router:
-    build: ../..
+    build:
+      context: ../..
+      network: host             # сборка в сети сервера: у Docker здесь iptables=false, NAT для сборки нет
     image: outpost-gate-pro:latest
     container_name: outpost-gate-pro
     restart: unless-stopped
