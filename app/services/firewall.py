@@ -121,7 +121,14 @@ def ifset(names) -> str:
     return "{ " + ", ".join(f'"{n}"' for n in names) + " }"
 
 
-def render_forward(fwd: PortForward, fid: int, wan) -> str:
+def render_forward(fwd: PortForward, fid: int, wan, vpn_iface: str | None = None) -> str:
+    """Проброс: с WAN, из VPN-туннеля (к устройству LAN с телефона через тот же сервер) или с обоих."""
+    wans = [wan] if isinstance(wan, str) else list(wan)
+    zone = getattr(fwd, "from_zone", "wan")
+    ifaces = (wans if zone in ("wan", "any") else []) + ([vpn_iface] if zone in ("vpn", "any") and vpn_iface else [])
+    if not ifaces:
+        return ""                                # проброс из VPN, а туннель выключен
+    wan = ifaces
     proto = "{ tcp, udp }" if fwd.protocol == "tcp+udp" else fwd.protocol
     src = f"ip saddr {fwd.src} " if fwd.src else ""
     target = fwd.to_ip + (f":{fwd.to_port}" if fwd.to_port else "")
@@ -199,7 +206,7 @@ def ruleset(wan: str, lan, wan_management: bool, vpn: VpnRules | None = None,
     user_in = "".join(render_rule(r, rid, ifaces) for rid, r in rules if r.enabled and r.chain == "input")
     user_fwd = "".join(render_rule(r, rid, ifaces) for rid, r in rules if r.enabled and r.chain == "forward")
     active_fwd = [(fid, f) for fid, f in forwards if f.enabled]
-    dnat = "".join(render_forward(f, fid, wans) for fid, f in active_fwd)
+    dnat = "".join(render_forward(f, fid, wans, vpn.iface if vpn else None) for fid, f in active_fwd)
 
     mgmt = ", ".join(str(p) for p in management_ports())
     mgmt_rule = f'{I}tcp dport {{ {mgmt} }} accept   # управление с WAN (веб, SSH)\n' if wan_management else ""

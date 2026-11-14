@@ -23,7 +23,7 @@ _lock = threading.RLock()
 
 # ключи YAML (как в RouterOS — через дефис) <-> поля моделей
 _RULE_KEYS = {"in_zone": "in-zone", "out_zone": "out-zone", "src_ports": "src-ports", "dst_ports": "dst-ports"}
-_FWD_KEYS = {"wan_port": "wan-port", "to_ip": "to-ip", "to_port": "to-port"}
+_FWD_KEYS = {"wan_port": "wan-port", "to_ip": "to-ip", "to_port": "to-port", "from_zone": "from"}
 
 
 class RuleError(Exception):

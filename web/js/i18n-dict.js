@@ -133,6 +133,10 @@ window.I18N_DICT = {
      "במצב DHCP אפשר להשאיר את שדות ה-DNS ריקים — אז ישמשו שרתי ה-DNS של הספק."],
   "Применить": ["Apply", "החל"],
   "Применено": ["Applied", "הוחל"],
+  "WAN (интернет)": ["WAN (internet)", "WAN (אינטרנט)"],
+  "VPN-туннель (телефон через тот же сервер)": ["VPN tunnel (phone via the same server)", "מנהרת VPN (טלפון דרך אותו שרת)"],
+  "WAN и VPN": ["WAN and VPN", "WAN ו-VPN"],
+  "Порт на роутере": ["Port on the router", "פורט בנתב"],
   "Управление через туннель (веб, SSH, CLI и ping с телефона через тот же VPN)": ["Management through the tunnel (web, SSH, CLI and ping from a phone over the same VPN)", "ניהול דרך המנהרה (ווב, SSH, CLI ו-ping מטלפון דרך אותו VPN)"],
   "через {dev}": ["via {dev}", "דרך {dev}"],
   "поднят, нет маршрута через {dev}": ["up, no route via {dev}", "פעיל, אין נתיב דרך {dev}"],
@@ -335,9 +339,7 @@ window.I18N_DICT = {
   "Трафик через роутер между LAN, WAN и VPN. Например: запретить устройству интернет или открыть центру по VPN только нужный порт.":
     ["Traffic through the router between LAN, WAN and VPN. For example: block internet for a device, or open only the needed port to the head office over VPN.",
      "תעבורה דרך הנתב בין LAN, WAN ו-VPN. לדוגמה: לחסום אינטרנט למכשיר או לפתוח למטה דרך VPN רק את הפורט הנדרש."],
-  "Порт на WAN-адресе роутера → устройство в LAN. Ответы устройства идут обратно автоматически. В режиме VPN «весь трафик» проброс с WAN работать не будет — ответы уйдут в туннель.":
-    ["A port on the router's WAN address → a device in the LAN. Replies from the device go back automatically. In the VPN “all traffic” mode, forwarding from WAN will not work — replies would go into the tunnel.",
-     "פורט בכתובת ה-WAN של הנתב ← מכשיר ב-LAN. התשובות של המכשיר חוזרות אוטומטית. במצב VPN „כל התעבורה” העברה מה-WAN לא תעבוד — התשובות ייצאו למנהרה."],
+  "Порт на WAN-адресе роутера → устройство в LAN. Ответы устройства идут обратно автоматически. В режиме VPN «весь трафик» проброс с WAN работать не будет — ответы уйдут в туннель. «Откуда: VPN-туннель» — порт на адресе роутера в туннеле (10.8.1.2): так телефон, подключённый к тому же VPN-серверу, попадает на устройство в LAN (АТС, камеру, NAS). Устройство видит настоящий адрес телефона (10.8.1.x).": ["A port on the router's WAN address → a device in the LAN. Device replies go back automatically. In VPN \"all traffic\" mode, forwarding from WAN won't work — replies go into the tunnel. \"From: VPN tunnel\" — a port on the router's tunnel address (10.8.1.2): this way a phone connected to the same VPN server reaches a LAN device (PBX, camera, NAS). The device sees the phone's real address (10.8.1.x).", "פורט בכתובת ה-WAN של הנתב → מכשיר ב-LAN. התשובות של המכשיר חוזרות אוטומטית. במצב VPN \"כל התעבורה\" העברה מ-WAN לא תעבוד — התשובות ילכו למנהרה. \"מאיפה: מנהרת VPN\" — פורט בכתובת הנתב במנהרה (10.8.1.2): כך טלפון שמחובר לאותו שרת VPN מגיע למכשיר ב-LAN (מרכזייה, מצלמה, NAS). המכשיר רואה את הכתובת האמיתית של הטלפון (10.8.1.x)."],
   "+ Добавить проброс": ["+ Add forward", "+ הוסף העברה"],
   "Новый проброс": ["New forward", "העברה חדשה"],
   "Проброс #{n} — изменить": ["Forward #{n} — edit", "העברה #{n} — עריכה"],
