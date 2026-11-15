@@ -59,13 +59,17 @@ async def start():
             self.conn = conn
             peer = conn.get_extra_info("peername")
             self.ip = peer[0] if peer else "-"
+            self.opts = ""
 
         def _grant(self, user: auth.User, token: str | None = None) -> None:
             self.conn.set_extra_info(og_user=user.name, og_role=user.role,
-                                     og_token=token or auth.make_token(user.name))
+                                     og_token=token or auth.make_token(user.name), og_opts=self.opts)
             system.audit(user.name, "SSH", "вход по SSH", 200, self.ip)
 
         def begin_auth(self, username):
+            # RouterOS: «admin+cet1024w» — имя и параметры терминала (без цветов, ширина). Так входит Ansible
+            # (community.routeros): берём имя, а сессию ведём в синтаксисе RouterOS без вопросов
+            username, _, self.opts = username.partition("+")
             if auth.passwordless(username) and auth.is_local(self.ip):
                 self._grant(auth.get_user(username.lower()))
                 return False                       # без пароля: сразу внутрь, как MikroTik
@@ -75,6 +79,7 @@ async def start():
             return True
 
         def validate_password(self, username, password):
+            username = username.partition("+")[0]
             try:
                 user, token = auth.login(username, password, self.ip)
             except auth.AuthError:
@@ -89,6 +94,7 @@ async def start():
         conn = process.get_extra_info("connection")
         env = {**os.environ, "OG_TOKEN": conn.get_extra_info("og_token"), "OG_USER": conn.get_extra_info("og_user"),
                "OG_ROLE": conn.get_extra_info("og_role"), "HOME": "/root",
+               **({"OG_SYNTAX": "routeros"} if conn.get_extra_info("og_opts") else {}),
                "TERM": process.get_terminal_type() or "xterm-256color"}
         cmd = [sys.executable, "-m", "app.cli"] + (["-c", process.command] if process.command else [])
 
