@@ -62,6 +62,32 @@ def me(request: Request):
             "has_password": user.has_password, "identity": system.identity()}
 
 
+class CliPrefsBody(BaseModel):
+    syntax: str
+
+
+@router.get("/cli")
+def get_cli_prefs(request: Request):
+    """Синтаксис CLI пользователя: routeros | linux | null (ещё не выбирал — CLI спросит при входе)."""
+    from app.services import cli_prefs
+    user = auth.user_from_token(auth.token_from(request.cookies, request.headers))
+    if not user:
+        raise HTTPException(401, "нужен вход")
+    return cli_prefs.get(user.name)
+
+
+@router.put("/cli")
+def set_cli_prefs(body: CliPrefsBody, request: Request):
+    from app.services import cli_prefs
+    user = auth.user_from_token(auth.token_from(request.cookies, request.headers))
+    if not user:
+        raise HTTPException(401, "нужен вход")
+    try:
+        return cli_prefs.set_syntax(user.name, body.syntax)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
 @router.post("/password")
 def change_password(body: PasswordBody, request: Request, response: Response):
     user = auth.user_from_token(auth.token_from(request.cookies, request.headers))

@@ -2382,7 +2382,7 @@ def execute(ctx: Ctx, line: str, cwd: list[str]) -> list[str]:
     pos, named = split_args(args)
     named = expand_params(cmd, named)
     ctx.detail = "detail" in pos
-    pos = [p for p in pos if p != "detail"]
+    pos = [p for p in pos if p not in ("detail", "without-paging")]   # without-paging — от Ansible / скриптов
     try:
         cmd.fn(ctx, pos, named)
     except ApiError as e:
