@@ -396,6 +396,11 @@ class Collector:
             except Exception as e:  # noqa: BLE001
                 print(f"[dhcp] ERROR: {e}")
             try:
+                from app.services import vpn
+                vpn.watch()                              # туннель «покраснел» (сон хоста, сбой) — переподключить
+            except Exception as e:  # noqa: BLE001
+                print(f"[vpn] ERROR: сторож: {e}")
+            try:
                 from app.services import gre
                 gre.watch()                              # GRE: underlay (AmneziaWG) поднялся позже
             except Exception as e:  # noqa: BLE001

@@ -40,6 +40,16 @@ TOOLS = {"wireguard": "wg", "amneziawg": "awg"}
 ROUTE_METRIC = 1
 FULL_ROUTES = ["0.0.0.0/1", "128.0.0.0/1"]
 HANDSHAKE_OK = 180   # секунд: WireGuard обновляет handshake каждые 2 минуты
+STALE = 210          # сторож: столько без handshake (или без PPP) — туннель мёртв, переподключить
+BACKOFF = (60, 600)  # между попытками переподключения: от 1 до 10 минут (удваивается)
+
+# Режим full, «трафик самого роутера — напрямую»: исходящие соединения роутера к публичным адресам
+# (кроме DNS туннеля и ICMP — ping/traceroute по-прежнему проверяют туннель) помечаются в nft и идут
+# по таблице BYPASS_TABLE — маршрут по умолчанию через WAN. /1 туннеля пропускаем (suppress_prefixlength 1),
+# более точные маршруты (LAN, сервер VPN /32, GRE) работают как обычно.
+BYPASS_MARK = 0x200
+BYPASS_TABLE = 120
+BYPASS_PREFS = (990, 991)
 APP_HOME = Path(__file__).resolve().parents[2]
 
 _lock = threading.RLock()
@@ -109,6 +119,8 @@ def firewall_rules() -> firewall.VpnRules | None:
         inbound=not cfg.nat,
         ipsec_server=st.get("endpoint_ip") if kind == "l2tp" and st.get("kind") == "l2tp" else None,
         management=cfg.management,
+        router_direct=cfg.mode == "full" and getattr(cfg, "router_direct", True),
+        tunnel_dns=tuple(d for d in (st.get("dns") or getattr(cfg, "dns", []) or []) if ":" not in d),
     )
 
 
@@ -232,6 +244,7 @@ def refresh_endpoint_route() -> None:
                 new = None
         st["endpoint_route"] = new
         save_state(st)
+    sync_bypass()                        # новый шлюз WAN — и для трафика самого роутера
 
 
 def _check_networks(networks: list[str]) -> None:
@@ -274,7 +287,7 @@ def _setup_wg(kind: str, cfg: WgConfig) -> None:
     else:
         netlink.wireguard_create(iface)
     state: dict = {"kind": kind, "iface": iface, "active": False, "mode": cfg.mode,
-                   "endpoint_ip": endpoint_ip, "dns": cfg.dns}
+                   "endpoint_ip": endpoint_ip, "dns": cfg.dns, "since": time.time()}
     save_state(state)
 
     conf = _secret_file(f"{iface}.conf", wg_conf(cfg, endpoint_ip, obfuscation=kind == "amneziawg", iface=iface))
@@ -386,7 +399,7 @@ def _setup_l2tp(cfg: L2tpConfig) -> None:
     _check_networks(cfg.networks)
     server_ip = resolve_host(cfg.server)
     save_state({"kind": "l2tp", "iface": IFACES["l2tp"], "active": False, "mode": cfg.mode,
-                "endpoint_ip": server_ip, "dns": []})
+                "endpoint_ip": server_ip, "dns": [], "since": time.time()})
     refresh_endpoint_route()
 
     # 1) IPsec: charon + конфиг через swanctl
@@ -465,6 +478,114 @@ def apply_current() -> None:
                 _setup_wg(kind, get_config(kind))
         finally:                         # фаервол и DNS — в любом случае (kill switch!)
             _refresh_neighbours()
+            sync_bypass()
+
+
+# --- трафик самого роутера мимо туннеля -------------------------------------------------------------
+def bypass_wanted() -> dict | None:
+    """Нужен ли обход: {"gateway", "dns"} или None."""
+    st = load_state()
+    kind = st.get("kind")
+    if not kind or not st.get("active") or st.get("mode") != "full":
+        return None
+    try:
+        cfg = get_config(kind)
+    except Exception:  # noqa: BLE001
+        return None
+    if not getattr(cfg, "router_direct", True):
+        return None
+    gw = wan.current_gateway()
+    return {"gateway": gw, "dns": list(st.get("dns") or [])} if gw else None
+
+
+def _ip(*args: str, check: bool = False) -> str:
+    try:
+        r = subprocess.run(["ip", *args], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        print(f"[vpn] WARNING: ip {' '.join(args)}: {e}")
+        return ""
+    if check and r.returncode != 0:
+        print(f"[vpn] WARNING: ip {' '.join(args)}: {(r.stderr or r.stdout).strip()}")
+    return r.stdout
+
+
+def sync_bypass() -> None:
+    """Правила ip rule / таблица BYPASS_TABLE — по bypass_wanted(). Пометку пакетов ставит фаервол."""
+    want = bypass_wanted()
+    mark = f"{BYPASS_MARK:#x}/{BYPASS_MARK:#x}"
+    have = _ip("rule", "show", "pref", str(BYPASS_PREFS[0]))
+    if want:
+        if "suppress_prefixlength" not in have:
+            _ip("rule", "add", "pref", str(BYPASS_PREFS[0]), "fwmark", mark, "lookup", "main",
+                "suppress_prefixlength", "1", check=True)
+        if f"lookup {BYPASS_TABLE}" not in _ip("rule", "show", "pref", str(BYPASS_PREFS[1])):
+            _ip("rule", "add", "pref", str(BYPASS_PREFS[1]), "fwmark", mark, "lookup", str(BYPASS_TABLE), check=True)
+        if f"via {want['gateway']} " not in _ip("route", "show", "table", str(BYPASS_TABLE)) + " ":
+            _ip("route", "replace", "default", "via", want["gateway"], "table", str(BYPASS_TABLE), check=True)
+    elif have or _ip("route", "show", "table", str(BYPASS_TABLE)):
+        for pref in BYPASS_PREFS:
+            _ip("rule", "del", "pref", str(pref))
+        _ip("route", "flush", "table", str(BYPASS_TABLE))
+
+
+# --- сторож: переподключить, если туннель «покраснел» ------------------------------------------------
+_watch = {"bad_since": None, "last": 0.0, "backoff": BACKOFF[0], "count": 0, "at": None, "reason": None}
+
+
+def _health(kind: str, st: dict, now: float) -> str | None:
+    """Почему туннель мёртв (None — жив). Тот же признак, что и красная надпись в вебе: handshake."""
+    since = st.get("since") or now
+    if not st.get("active"):
+        return "туннель не поднят" if now - since > STALE else None
+    if kind == "l2tp":
+        return None
+    if kind == "amneziawg" and not _awg.running():
+        return "процесс amneziawg-go остановился"
+    try:
+        lines = _tool(kind, "show", IFACES[kind], "dump").splitlines()
+    except VpnError as e:
+        return f"{TOOLS[kind]} show: {e.message}"
+    hs = int(lines[1].split("\t")[4]) if len(lines) > 1 else 0
+    if hs and now - hs > STALE:
+        return f"нет handshake с сервером {int(now - hs)} с"
+    if not hs and now - since > STALE:
+        return f"сервер не ответил за {int(now - since)} с после подключения"
+    return None
+
+
+def watch() -> str | None:
+    """Раз в 10 с (сборщик мониторинга). -> причина переподключения, если переподключал."""
+    kind = enabled_kind()
+    if not kind:
+        return None
+    try:
+        cfg = get_config(kind)
+    except Exception:  # noqa: BLE001
+        return None
+    sync_bypass()                        # шлюз WAN мог смениться
+    if not getattr(cfg, "reconnect", True):
+        return None
+    now = time.time()
+    st = load_state()
+    if st.get("kind") != kind:
+        reason = "туннель включён в настройках, но не поднят"
+    else:
+        reason = _health(kind, st, now)
+    w = _watch
+    if not reason:
+        w.update(bad_since=None, backoff=BACKOFF[0])
+        return None
+    w["bad_since"] = w["bad_since"] or now
+    if now - w["last"] < w["backoff"]:
+        return None
+    print(f"[vpn] сторож: {reason} — переподключаю {kind}")
+    w.update(last=now, count=w["count"] + 1, at=now, reason=reason,
+             backoff=min(w["backoff"] * 2, BACKOFF[1]) if w["count"] else w["backoff"])
+    try:
+        apply_current()
+    except VpnError as e:
+        print(f"[vpn] сторож: не удалось: {e.message}")
+    return reason
 
 
 def _refresh_neighbours() -> None:
@@ -552,6 +673,7 @@ def _status_wg(kind: str) -> WgStatus:
         private_key_set=bool(cfg.private_key),
         endpoint_ip=st.get("endpoint_ip") if mine else None,
         active=mine and bool(st.get("active")) and iface in netlink.link_names(),
+        reconnects=_watch["count"], last_reconnect=_watch["at"], reconnect_reason=_watch["reason"],
     )
     try:
         if cfg.private_key:
@@ -578,6 +700,7 @@ def _status_l2tp() -> L2tpStatus:
         config=cfg.model_copy(update={"psk": None, "password": None}),
         psk_set=bool(cfg.psk), password_set=bool(cfg.password),
         endpoint_ip=st.get("endpoint_ip") if mine else None,
+        reconnects=_watch["count"], last_reconnect=_watch["at"], reconnect_reason=_watch["reason"],
     )
     if mine:
         out.connected = bool(st.get("active")) and iface in netlink.link_names()

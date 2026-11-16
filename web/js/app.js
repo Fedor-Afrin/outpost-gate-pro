@@ -1165,6 +1165,8 @@ function fillWgForm(c, privateKeySet) {
   f.killswitch.checked = c.killswitch;
   f.nat.checked = c.nat;
   f.management.checked = !!c.management;
+  f.reconnect.checked = c.reconnect !== false;
+  f.router_direct.checked = c.router_direct !== false;
   f.private_key.value = c.private_key ?? "";
   f.private_key.placeholder = privateKeySet ? "задан — пусто = не менять" : "";
   f.addresses.value = c.addresses.join(", ");
@@ -1188,6 +1190,12 @@ function parseObfuscation(text) {
   return out;
 }
 
+function reconnectText(s) {
+  if (s.config.reconnect === false) return I18N.t("сторож выключен");
+  if (!s.reconnects) return I18N.t("не было");
+  return I18N.t("{n}, последнее {when}: {why}", { n: s.reconnects, when: ago(s.last_reconnect), why: s.reconnect_reason || "" });
+}
+
 async function loadWg() {
   const w = await api("GET", `/api/vpn/${vpnKind}`);
   $("#vs-state").innerHTML = !w.config.enabled ? "выключен"
@@ -1198,6 +1206,7 @@ async function loadWg() {
   $("#vs-traffic").textContent = w.active ? `↓ ${fmt(w.rx_bytes)}  ↑ ${fmt(w.tx_bytes)}` : "—";
   $("#vs-pub").textContent = w.public_key ?? "—";
   $("#vs-error").textContent = w.error ?? "";
+  $("#vs-reconnect").textContent = reconnectText(w);
   if (!wgFormLoaded) { fillWgForm(w.config, w.private_key_set); wgFormLoaded = true; }
 }
 
@@ -1249,6 +1258,8 @@ $("#wg-form").addEventListener("submit", async (ev) => {
       killswitch: f.killswitch.checked,
       nat: f.nat.checked,
       management: f.management.checked,
+      reconnect: f.reconnect.checked,
+      router_direct: f.router_direct.checked,
       private_key: f.private_key.value || null,
       addresses: splitList(f.addresses.value),
       dns: splitList(f.dns.value),
@@ -1280,6 +1291,8 @@ function fillL2tpForm(st) {
   f.killswitch.checked = c.killswitch;
   f.nat.checked = c.nat;
   f.management.checked = !!c.management;
+  f.reconnect.checked = c.reconnect !== false;
+  f.router_direct.checked = c.router_direct !== false;
   f.server.value = c.server ?? "";
   f.psk.value = "";
   f.psk.placeholder = st.psk_set ? "задан — пусто = не менять" : "";
@@ -1301,6 +1314,7 @@ async function loadL2tp() {
   $("#ls2-ip").textContent = st.local_ip ? `${st.local_ip} ↔ ${st.remote_ip}` : "—";
   $("#ls2-traffic").textContent = st.connected ? `↓ ${fmt(st.rx_bytes)}  ↑ ${fmt(st.tx_bytes)}` : "—";
   $("#ls2-error").textContent = st.error ?? "";
+  $("#ls2-reconnect").textContent = reconnectText(st);
   if (!l2tpFormLoaded) { fillL2tpForm(st); l2tpFormLoaded = true; }
 }
 
@@ -1318,6 +1332,8 @@ $("#l2tp-form").addEventListener("submit", async (ev) => {
       killswitch: f.killswitch.checked,
       nat: f.nat.checked,
       management: f.management.checked,
+      reconnect: f.reconnect.checked,
+      router_direct: f.router_direct.checked,
       server: f.server.value || null,
       psk: f.psk.value || null,
       username: f.username.value || null,
