@@ -2,12 +2,12 @@
 Синтаксис Linux в CLI роутера: ip (iproute2), bridge, ss, nmcli, ping, traceroute.
 
   * просмотр — настоящими утилитами: ip a, ip -br link, ip r, ip neigh, bridge link, ss -tlnp —
-    роутер работает в сети сервера, вывод честный;
+    роутер работает в сети сервера, вывод честный (в живой сессии — с цветами iproute2);
   * изменения — через API роутера (router.yaml), как кнопки в вебе: ip addr add / ip route add,
     nmcli con mod / up / down. Прямо в ядро не пишем — при следующем применении роутер стёр бы правку;
   * чего у роутера нет — отказ с подсказкой, как сделать это командой RouterOS.
 
-Строка с «/» в начале — команда RouterOS и здесь: /ip firewall nat print.
+Сообщения — по-английски (term.CATALOG переводит на ru / he: sl2 / sl3). «/…» — команда RouterOS и здесь.
 """
 from __future__ import annotations
 
@@ -16,43 +16,33 @@ import re
 import shlex
 import subprocess
 
+from app.cli import term
 from app.cli.commands import CliError, Quit, _run_live
 
 SAFE_ARG = re.compile(r"^[A-Za-z0-9_.:/@%+,=-]+$")
 IP_OPTS = {"-4", "-6", "-br", "-brief", "-s", "-stats", "-statistics", "-d", "-details", "-j", "-json",
-           "-p", "-pretty", "-c", "-color", "-o", "-oneline", "-h", "-human", "-0", "-a", "-all"}
+           "-p", "-pretty", "-c", "-color", "-color=always", "-color=auto", "-color=never", "-o", "-oneline",
+           "-h", "-human", "-0", "-a", "-all"}
 IP_OBJECTS = {"a": "address", "ad": "address", "addr": "address", "address": "address",
               "r": "route", "ro": "route", "route": "route", "l": "link", "li": "link", "link": "link",
               "n": "neigh", "ne": "neigh", "neigh": "neigh", "neighbor": "neigh", "neighbour": "neigh",
               "ru": "rule", "rule": "rule", "m": "maddress", "maddr": "maddress", "maddress": "maddress",
               "mr": "mroute", "mroute": "mroute", "tunnel": "tunnel", "tun": "tunnel"}
 READ_VERBS = {None, "show", "list", "lst", "ls", "sh", "get"}
+WRITE_VERBS = {"add", "del", "delete", "change", "replace", "set", "flush", "append", "prepend", "exec", "save",
+               "restore", "attach", "detach", "monitor"}
 
-HELP = """Синтаксис Linux (как на сервере):
-  ip a | ip -br a | ip addr show dev br-lan     адреса
-  ip r | ip route get 8.8.8.8                    маршруты
-  ip link | ip -s link | ip neigh | ip rule      интерфейсы, ARP, правила
-  bridge link | bridge vlan                      мосты и VLAN
-  ss -tlnp | ss -ulnp                            кто слушает порты
-  ping -c 3 samba | traceroute 8.8.8.8           проверка связи (имена — через DNS роутера)
-  ip addr add 10.10.0.1/24 dev br-lan           адрес (в конфиг роутера, как /ip address add)
-  ip addr del 10.10.0.1/24 dev br-lan
-  ip route add 192.168.20.0/24 via 172.16.0.2   маршрут (в конфиг, как /ip route add)
-  ip route del 192.168.20.0/24
-  nmcli | nmcli d | nmcli c                      устройства и «соединения» (WAN, сегменты LAN, VPN, GRE)
-  nmcli c show lan1
-  nmcli c mod wan ipv4.method manual ipv4.addresses 203.0.113.10/24 ipv4.gateway 203.0.113.1 ipv4.dns "1.1.1.1 8.8.8.8"
-  nmcli c mod lan1 ipv4.addresses 192.168.1.1/24
-  nmcli c up amneziawg | nmcli c down lan2
-  /…           команда RouterOS (например, /ip firewall nat print)
-  routeros     перейти на синтаксис MikroTik · exit — выход"""
+
+def E(en: str, **kw) -> CliError:
+    """Ошибка по-английски (переводится при выводе: term.tr)."""
+    return CliError(en.format(**kw) if kw else en)
 
 
 # --- общие ---------------------------------------------------------------------------------------------
 def _safe(args: list[str]) -> list[str]:
     for a in args:
         if not SAFE_ARG.match(a):
-            raise CliError(f"недопустимый аргумент: {a}")
+            raise E("invalid argument: {a}", a=a)
     return args
 
 
@@ -60,12 +50,12 @@ def _run(cmd: list[str]) -> str:
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
     except FileNotFoundError:
-        raise CliError(f"нет программы {cmd[0]}")
+        raise E("{cmd}: program not found", cmd=cmd[0])
     except subprocess.TimeoutExpired:
-        raise CliError(f"{cmd[0]}: нет ответа за 15 с")
+        raise E("{cmd}: no answer in 15 s", cmd=cmd[0])
     out = (r.stdout or "") + (r.stderr or "")
     if r.returncode != 0 and not r.stdout:
-        raise CliError(out.strip() or f"{cmd[0]}: код {r.returncode}")
+        raise CliError(out.strip()) if out.strip() else E("{cmd}: exit code {code}", cmd=cmd[0], code=r.returncode)
     return out.rstrip("\n")
 
 
@@ -74,38 +64,60 @@ def _print(ctx, text: str) -> None:
         ctx.out(line)
 
 
-def _table(ctx, head: list[str], rows: list[list]) -> None:
+def _say(ctx, en: str, **kw) -> None:
+    ctx.out(term.T(ctx.lang, en, **kw))
+
+
+STATE_COLOR = {"activated": "green", "connected": "green", "connecting": "yellow", "deactivated": None,
+               "disconnected": "red", "unavailable": "dim", "unmanaged": "dim", "connected (externally)": "green",
+               "full": "green", "none": "red"}
+
+
+def _table(ctx, head: list[str], rows: list[list], color_col: int | None = None, row_green=None) -> None:
+    """Таблица в стиле nmcli. color_col — колонка состояния (цвет по значению);
+    row_green(row) — строка активного соединения целиком зелёная (как nmcli c)."""
     rows = [[("--" if v in (None, "") else str(v)) for v in r] for r in rows]
-    widths = [max(len(h), *(len(r[i]) for r in rows)) if rows else len(h) for i, h in enumerate(head)]
-    ctx.out("  ".join(h.ljust(w) for h, w in zip(head, widths)).rstrip())
+    widths = [max([len(h)] + [len(r[i]) for r in rows]) for i, h in enumerate(head)]
+    ctx.out(term.paint(ctx.color, "  ".join(h.ljust(w) for h, w in zip(head, widths)).rstrip(), "bold"))
     for r in rows:
-        ctx.out("  ".join(v.ljust(w) for v, w in zip(r, widths)).rstrip())
+        green = bool(row_green and row_green(r))
+        cells = []
+        for i, (v, w) in enumerate(zip(r, widths)):
+            cell = v.ljust(w)
+            if green:
+                cell = term.paint(ctx.color, cell, "green")
+            elif i == color_col and STATE_COLOR.get(v):
+                cell = term.paint(ctx.color, cell, STATE_COLOR[v])
+            elif v == "--":
+                cell = term.paint(ctx.color, cell, "dim")
+            cells.append(cell)
+        ctx.out("  ".join(cells).rstrip())
 
 
 def execute(ctx, line: str) -> None:
     try:
         argv = shlex.split(line)
     except ValueError as e:
-        raise CliError(f"кавычки: {e}")
+        raise E("quotes: {e}", e=e)
     if not argv:
         return
     cmd, args = argv[0], argv[1:]
     if cmd in ("exit", "quit", "logout"):
         raise Quit()
     if cmd in ("help", "?", "-h", "--help"):
-        _print(ctx, HELP)
+        for l in term.help_lines(ctx.color, ctx.lang):
+            ctx.out(l)
         return
     fn = {"ip": ip_cmd, "bridge": bridge_cmd, "ss": ss_cmd, "nmcli": nmcli, "ping": ping, "traceroute": traceroute,
           "tracepath": traceroute, "hostname": hostname, "clear": lambda c, a: c.out("\x1b[2J\x1b[H")}.get(cmd)
     if not fn:
-        raise CliError(f"{cmd}: команда не поддерживается. help — список, /… — команда RouterOS, "
-                       "/system shell — настоящий bash")
+        raise E("{cmd}: command not supported. help — list, /… — RouterOS command, /system shell — real bash", cmd=cmd)
     fn(ctx, args)
 
 
 def hostname(ctx, args):
     if args:
-        raise CliError("имя роутера меняется так: /system identity set name=office")
+        raise E("the router name is changed like this: /system identity set name=office")
     ctx.out(ctx.api.get("/api/auth/me").get("identity") or "outpost-gate-pro")
 
 
@@ -115,23 +127,28 @@ def _split_ip(args: list[str]) -> tuple[list[str], str | None, list[str]]:
     while rest and rest[0].startswith("-"):
         o = rest.pop(0)
         if o not in IP_OPTS:
-            raise CliError(f"ip: ключ {o} не поддерживается (можно: {' '.join(sorted(IP_OPTS))})")
+            raise E("ip: option {o} is not supported (allowed: {allowed})", o=o, allowed=" ".join(sorted(IP_OPTS)))
         opts.append(o)
     if not rest:
-        raise CliError("ip: укажите объект — address, route, link, neigh, rule")
+        raise E("ip: specify an object — address, route, link, neigh, rule")
     obj = IP_OBJECTS.get(rest[0])
     if not obj:
-        raise CliError(f"ip {rest[0]}: объект не поддерживается (address, route, link, neigh, rule)")
+        raise E("ip {o}: object not supported (address, route, link, neigh, rule)", o=rest[0])
     return opts, obj, rest[1:]
+
+
+def _colored(ctx, opts: list[str]) -> list[str]:
+    """Цвета iproute2, как в терминале: -color=always (вывод идёт не напрямую в терминал)."""
+    if ctx.color and not any(o.startswith(("-c", "-j")) for o in opts):
+        return ["-color=always", *opts]
+    return opts
 
 
 def ip_cmd(ctx, args):
     opts, obj, rest = _split_ip(args)
     verb = rest[0] if rest else None
-    if verb in READ_VERBS or (verb and verb not in ("add", "del", "delete", "change", "replace", "set",
-                                                       "flush", "append", "prepend", "exec", "save", "restore",
-                                                       "attach", "detach", "monitor") and obj != "route"):
-        _print(ctx, _run(["ip", *_safe(opts), obj, *_safe(rest)]))
+    if verb in READ_VERBS or (verb and verb not in WRITE_VERBS and obj != "route"):
+        _print(ctx, _run(["ip", *_colored(ctx, _safe(opts)), obj, *_safe(rest)]))
         return
     if obj == "address" and verb == "add":
         return _addr_add(ctx, rest[1:])
@@ -141,15 +158,16 @@ def ip_cmd(ctx, args):
         return _route_add(ctx, rest[1:])
     if obj == "route" and verb in ("del", "delete"):
         return _route_del(ctx, rest[1:])
-    hints = {"link": "интерфейсы: /interface print; порты в сегментах — /lan, nmcli c mod; выключить сегмент — nmcli c down lan2",
-             "neigh": "ARP-таблица только для просмотра: ip neigh",
-             "rule": "правила маршрутизации роутер ведёт сам (два WAN, VPN)",
+    hints = {"link": "interfaces: /interface print; ports in segments — nmcli c mod; disable a segment — nmcli c down lan2",
+             "neigh": "the ARP table is view-only: ip neigh",
+             "rule": "the router manages routing rules itself (two WANs, VPN)",
              "address": "ip addr add|del ADDR dev IFACE",
              "route": "ip route add|del NET [via GW] [dev IFACE] [metric N]"}
-    raise CliError(f"ip {obj} {verb or ''}: так не умею. {hints.get(obj, '')}".strip())
+    hint = term.T(ctx.lang, hints.get(obj, ""))
+    raise CliError(term.T(ctx.lang, "ip {obj} {verb}: not supported. {hint}", obj=obj, verb=verb or "", hint=hint))
 
 
-def _kv(rest: list[str], first_positional: bool = True) -> tuple[str | None, dict]:
+def _kv(rest: list[str]) -> tuple[str | None, dict]:
     """ip route add NET via GW dev X metric N  ->  (NET, {via, dev, metric})."""
     pos, named, i = None, {}, 0
     keys = {"via", "dev", "metric", "proto", "table", "src", "label", "broadcast", "brd", "scope", "onlink",
@@ -158,17 +176,17 @@ def _kv(rest: list[str], first_positional: bool = True) -> tuple[str | None, dic
         w = rest[i]
         if w in keys:
             if i + 1 >= len(rest):
-                raise CliError(f"после {w} нужно значение")
+                raise E("a value is required after {w}", w=w)
             named[w] = rest[i + 1]
             i += 2
         elif w == "to" and i + 1 < len(rest):
             pos = rest[i + 1]
             i += 2
-        elif pos is None and first_positional:
+        elif pos is None:
             pos = w
             i += 1
         else:
-            raise CliError(f"непонятный параметр: {w}")
+            raise E("unexpected parameter: {w}", w=w)
     return pos, named
 
 
@@ -177,9 +195,9 @@ def _addr_add(ctx, rest):
     if not addr or "dev" not in kv:
         raise CliError("ip addr add 10.10.0.1/24 dev br-lan")
     if "/" not in addr:
-        raise CliError("укажите маску: 10.10.0.1/24")
+        raise E("specify a mask: 10.10.0.1/24")
     ctx.api.post("/api/ip/addresses", {"address": addr, "interface": kv["dev"], "comment": "ip addr add"})
-    ctx.out(f"{addr} dev {kv['dev']} — добавлен в конфигурацию (как /ip address add)")
+    _say(ctx, "{addr} dev {dev} — added to the configuration (like /ip address add)", addr=addr, dev=kv["dev"])
 
 
 def _addr_del(ctx, rest):
@@ -191,14 +209,14 @@ def _addr_del(ctx, rest):
     found = [a for a in items if (a["address"] == want if want else a["address"].split("/")[0] == addr)
              and ("dev" not in kv or a["interface"] == kv["dev"])]
     if not found:
-        raise CliError(f"адреса {addr} нет")
+        raise E("no address {addr}", addr=addr)
     own = [a for a in found if a.get("id") is not None]
     if not own:
-        raise CliError(f"{addr} задан не командой ip/RouterOS, а настройкой сегмента, WAN или VPN — "
-                       "меняйте там: nmcli c mod lan1 ipv4.addresses …, nmcli c mod wan …")
+        raise E("{addr} comes from a segment, WAN or VPN setting, not from ip/RouterOS — change it there: "
+                "nmcli c mod lan1 ipv4.addresses …, nmcli c mod wan …", addr=addr)
     for a in own:
         ctx.api.delete(f"/api/ip/addresses/{a['id']}")
-    ctx.out(f"{addr} — удалён из конфигурации")
+    _say(ctx, "{addr} — removed from the configuration", addr=addr)
 
 
 def _dst(net: str) -> str:
@@ -207,21 +225,22 @@ def _dst(net: str) -> str:
     try:
         return str(ipaddress.ip_network(net, strict=False))
     except ValueError:
-        raise CliError(f"неверная сеть: {net}")
+        raise E("invalid network: {net}", net=net)
 
 
 def _route_add(ctx, rest):
     net, kv = _kv(rest)
     if not net or not (kv.get("via") or kv.get("dev")):
-        raise CliError("ip route add 192.168.20.0/24 via 172.16.0.2   (или dev gre1)")
+        raise CliError("ip route add 192.168.20.0/24 via 172.16.0.2   (dev gre1)")
     body = {"dst_address": _dst(net), "gateway": kv.get("via") or kv["dev"], "comment": "ip route add"}
     if "metric" in kv:
         try:
             body["distance"] = max(1, min(255, int(kv["metric"])))
         except ValueError:
-            raise CliError("metric — число")
+            raise E("metric must be a number")
     ctx.api.post("/api/ip/routes", body)
-    ctx.out(f"{body['dst_address']} via {body['gateway']} — добавлен в конфигурацию (как /ip route add)")
+    _say(ctx, "{dst} via {gw} — added to the configuration (like /ip route add)", dst=body["dst_address"],
+         gw=body["gateway"])
 
 
 def _route_del(ctx, rest):
@@ -230,28 +249,36 @@ def _route_del(ctx, rest):
         raise CliError("ip route del 192.168.20.0/24 [via 172.16.0.2]")
     dst = _dst(net)
     routes = [r for r in ctx.api.get("/api/ip/routes") if r["dst_address"] == dst
-              and (not kv.get("via") or r["gateway"] == kv["via"]) and (not kv.get("dev") or r["gateway"] == kv["dev"]
-                                                                       or r.get("interface") == kv["dev"])]
+              and (not kv.get("via") or r["gateway"] == kv["via"])
+              and (not kv.get("dev") or r["gateway"] == kv["dev"] or r.get("interface") == kv["dev"])]
     own = [r for r in routes if r.get("id") is not None]
     if not own:
-        raise CliError(f"маршрута {dst} нет в конфигурации" + (" — он динамический (WAN, VPN, OSPF, GRE)" if routes else ""))
+        if routes:
+            raise E("route {dst} is not in the configuration — it is dynamic (WAN, VPN, OSPF, GRE)", dst=dst)
+        raise E("route {dst} is not in the configuration", dst=dst)
     for r in own:
         ctx.api.delete(f"/api/ip/routes/{r['id']}")
-    ctx.out(f"{dst} — удалён из конфигурации")
+    _say(ctx, "{dst} — removed from the configuration", dst=dst)
 
 
 # --- bridge, ss, ping, traceroute ---------------------------------------------------------------------
 def bridge_cmd(ctx, args):
     rest = [a for a in args if not a.startswith("-")]
     if not rest or rest[0] not in ("link", "fdb", "vlan", "mdb") or (len(rest) > 1 and rest[1] not in READ_VERBS):
-        raise CliError("bridge: только просмотр — bridge link | bridge fdb | bridge vlan")
-    _print(ctx, _run(["bridge", *_safe(args)]))
+        raise E("bridge: view only — bridge link | bridge fdb | bridge vlan")
+    opts = ["-color=always"] if ctx.color and not any(a.startswith(("-c", "-j")) for a in args) else []
+    _print(ctx, _run(["bridge", *opts, *_safe(args)]))
 
 
 def ss_cmd(ctx, args):
     if any(a.startswith("-") and not re.fullmatch(r"-[tulnpaxwse46HOr]+", a) for a in args):
-        raise CliError("ss: можно ключи -t -u -l -n -p -a -s -4 -6 и фильтры")
-    _print(ctx, _run(["ss", *_safe(args)]))
+        raise E("ss: allowed options -t -u -l -n -p -a -s -4 -6 and filters")
+    text = _run(["ss", *_safe(args)])
+    lines = text.splitlines()
+    if lines and ctx.color:                           # заголовок — жирным, LISTEN — зелёным
+        lines[0] = term.paint(True, lines[0], "bold")
+        lines = [lines[0]] + [re.sub(r"\bLISTEN\b", term.paint(True, "LISTEN", "green"), l) for l in lines[1:]]
+    _print(ctx, "\n".join(lines))
 
 
 def _target(ctx, args: list[str], allowed: dict[str, bool]) -> tuple[list[str], str]:
@@ -263,26 +290,26 @@ def _target(ctx, args: list[str], allowed: dict[str, bool]) -> tuple[list[str], 
         if a in allowed:
             if allowed[a]:
                 if i + 1 >= len(args):
-                    raise CliError(f"после {a} нужно значение")
+                    raise E("a value is required after {w}", w=a)
                 out += [a, _safe([args[i + 1]])[0]]
                 i += 2
                 continue
             out.append(a)
         elif a.startswith("-"):
-            raise CliError(f"ключ {a} не поддерживается (можно: {' '.join(allowed)})")
+            raise E("option {a} is not supported (allowed: {allowed})", a=a, allowed=" ".join(allowed))
         elif host is None:
             host = a
         else:
-            raise CliError(f"лишний аргумент: {a}")
+            raise E("extra argument: {a}", a=a)
         i += 1
     if not host:
-        raise CliError("укажите адрес")
+        raise E("specify an address")
     try:
         ip, via = tools.resolve_sync(tools.check_host(host), 6 if "-6" in out else None)
     except tools.ToolError as e:
         raise CliError(str(e))
     if ip != host:
-        ctx.out(f"{host} -> {ip} ({via})")
+        ctx.out(term.paint(ctx.color, f"{host} -> {ip} ({via})", "dim"))
     return out, ip
 
 
@@ -292,7 +319,7 @@ def ping(ctx, args):
     if "-c" not in opts:
         opts += ["-c", "4"]                           # без -c ping не остановится: как в RouterOS — 4 пакета
     if "-i" in opts and float(opts[opts.index("-i") + 1]) < 0.2:
-        raise CliError("-i: не меньше 0.2 с")
+        raise E("-i: at least 0.2 s")
     _run_live(ctx, ["ping", *opts, ip])
 
 
@@ -330,7 +357,8 @@ def _connections(ctx) -> list[dict]:
         g = ctx.api.get("/api/gre")
         st = {t["name"]: t for t in g["tunnels"]}
         for t in g["config"]["tunnels"]:
-            out.append({"name": t["name"], "type": "ip-tunnel", "device": t["name"] if st.get(t["name"], {}).get("exists") else None,
+            out.append({"name": t["name"], "type": "ip-tunnel",
+                        "device": t["name"] if st.get(t["name"], {}).get("exists") else None,
                         "state": "activated" if t["enabled"] else "deactivated", "kind": "gre", "data": t})
     except CliError:
         pass
@@ -341,18 +369,18 @@ def _find(ctx, name: str) -> dict:
     for c in _connections(ctx):
         if name in (c["name"], c.get("alias"), c.get("device")):
             return c
-    raise CliError(f"Error: unknown connection '{name}'. Список: nmcli c")
+    raise E("Error: unknown connection '{name}'. List: nmcli c", name=name)
 
 
 def nmcli(ctx, args):
     args = [a for a in args if a not in ("-p", "--pretty", "-t", "--terse")]
     obj = args[0] if args else "general"
     rest = args[1:]
-    if "general".startswith(obj) and obj:
+    if obj and "general".startswith(obj):
         return _nm_general(ctx)
     if "device".startswith(obj):
         if rest and rest[0] not in ("status", "s", "show"):
-            raise CliError("nmcli device: только просмотр (status). Порты — nmcli c mod / LAN в вебе")
+            raise E("nmcli device: view only (status). Ports — nmcli c mod / LAN in the web UI")
         return _nm_devices(ctx)
     if "connection".startswith(obj):
         verb = rest[0] if rest else "show"
@@ -362,17 +390,18 @@ def nmcli(ctx, args):
             return _nm_modify(ctx, rest[1:])
         if verb in ("up", "down"):
             if len(rest) < 2:
-                raise CliError(f"nmcli c {verb} ИМЯ")
+                raise E("nmcli c {verb} NAME", verb=verb)
             return _nm_updown(ctx, rest[1], verb == "up")
-        raise CliError("nmcli connection: show | modify | up | down (add/delete — сегменты LAN в вебе или /lan)")
-    raise CliError("nmcli: general | device | connection")
+        raise E("nmcli connection: show | modify | up | down (add/delete — LAN segments in the web UI or /lan)")
+    raise E("nmcli: general | device | connection")
 
 
 def _nm_general(ctx):
     w = ctx.api.get("/api/wan")
     ok = bool(w.get("gateway"))
     _table(ctx, ["STATE", "CONNECTIVITY", "WAN", "GATEWAY"],
-           [["connected" if ok else "disconnected", "full" if ok else "none", w.get("interface"), w.get("gateway")]])
+           [["connected" if ok else "disconnected", "full" if ok else "none", w.get("interface"), w.get("gateway")]],
+           color_col=0)
 
 
 def _nm_devices(ctx):
@@ -389,7 +418,7 @@ def _nm_devices(ctx):
         rows.append([name, kind,
                      ("connected" if up else "unavailable") if c else ("connected (externally)" if up else "unmanaged"),
                      c["name"] if c else None])
-    _table(ctx, ["DEVICE", "TYPE", "STATE", "CONNECTION"], rows)
+    _table(ctx, ["DEVICE", "TYPE", "STATE", "CONNECTION"], rows, color_col=2)
 
 
 def _nm_show(ctx, rest):
@@ -397,7 +426,8 @@ def _nm_show(ctx, rest):
     conns = _connections(ctx)
     if not rest:
         _table(ctx, ["NAME", "TYPE", "DEVICE", "STATE"],
-               [[c["name"], c["type"], c["device"], c["state"]] for c in conns])
+               [[c["name"], c["type"], c["device"], c["state"]] for c in conns],
+               color_col=3, row_green=lambda r: r[3] == "activated")
         return
     c = _find(ctx, rest[0])
     props = [("connection.id", c["name"]), ("connection.type", c["type"]),
@@ -421,12 +451,20 @@ def _nm_show(ctx, rest):
                   ("ip-tunnel.parent", t.get("underlay")), ("ip-tunnel.mtu", t.get("mtu")),
                   ("ipv4.addresses", t["address"]), ("ipv4.routes", ", ".join(t.get("routes") or []))]
     for k, v in props:
-        ctx.out(f"{k + ':':<30}{'--' if v in (None, '') else v}")
+        key = f"{k + ':':<30}"
+        val = "--" if v in (None, "") else str(v)
+        if k.split(".")[0].isupper():                 # активные свойства (GENERAL, IP4) — как nmcli: жирным
+            key = term.paint(ctx.color, key, "bold")
+        if val == "--":
+            val = term.paint(ctx.color, val, "dim")
+        elif k == "GENERAL.STATE" and STATE_COLOR.get(val):
+            val = term.paint(ctx.color, val, STATE_COLOR[val])
+        ctx.out(key + val)
 
 
 def _nm_modify(ctx, rest):
     if len(rest) < 3 or len(rest[1:]) % 2:
-        raise CliError("nmcli c mod ИМЯ свойство значение [свойство значение …]")
+        raise E("nmcli c mod NAME property value [property value …]")
     c = _find(ctx, rest[0])
     pairs = list(zip(rest[1::2], rest[2::2]))
     if c["kind"] in ("wan", "wan2"):
@@ -436,7 +474,7 @@ def _nm_modify(ctx, rest):
             if k == "ipv4.method":
                 m = {"auto": "dhcp", "manual": "static", "disabled": "none"}.get(v)
                 if not m:
-                    raise CliError("ipv4.method: auto | manual | disabled")
+                    raise E("ipv4.method: auto | manual | disabled")
                 cfg["mode"] = m
             elif k in ("ipv4.addresses", "ipv4.address"):
                 cfg["address"] = v.split(",")[0].strip() or None
@@ -445,7 +483,7 @@ def _nm_modify(ctx, rest):
             elif k == "ipv4.dns":
                 cfg["dns"] = [x for x in re.split(r"[,\s]+", v) if x]
             else:
-                raise CliError(f"{k}: для WAN можно ipv4.method, ipv4.addresses, ipv4.gateway, ipv4.dns")
+                raise E("{k}: for WAN use ipv4.method, ipv4.addresses, ipv4.gateway, ipv4.dns", k=k)
         ctx.api.put("/api/wan" if c["kind"] == "wan" else "/api/wan/wan2", cfg)
     elif c["kind"] == "lan":
         cfg = dict(c["data"]["config"])
@@ -454,16 +492,15 @@ def _nm_modify(ctx, rest):
                 cfg["address"] = v.split(",")[0].strip()
             elif k == "ipv4.method":
                 if v not in ("shared", "manual"):
-                    raise CliError("ipv4.method для сегмента: shared (раздавать адреса по DHCP) | manual (без DHCP)")
+                    raise E("ipv4.method for a segment: shared (hand out addresses via DHCP) | manual (no DHCP)")
                 cfg["dhcp_enabled"] = v == "shared"
             elif k == "connection.autoconnect":
                 cfg["enabled"] = v in ("yes", "true", "1")
             elif k == "ipv4.dns-search":
                 cfg["domain"] = v or None
             else:
-                raise CliError(f"{k}: для сегмента можно ipv4.addresses, ipv4.method, ipv4.dns-search, connection.autoconnect")
-        path = "/api/lan" if cfg["id"] == "lan1" else f"/api/lan/segments/{cfg['id']}"
-        ctx.api.put(path, cfg)
+                raise E("{k}: for a segment use ipv4.addresses, ipv4.method, ipv4.dns-search, connection.autoconnect", k=k)
+        ctx.api.put("/api/lan" if cfg["id"] == "lan1" else f"/api/lan/segments/{cfg['id']}", cfg)
     elif c["kind"] == "gre":
         g = ctx.api.get("/api/gre")["config"]["tunnels"]
         t = next(x for x in g if x["name"] == c["name"])
@@ -471,13 +508,12 @@ def _nm_modify(ctx, rest):
             key = {"ip-tunnel.remote": "remote", "ip-tunnel.local": "local", "ip-tunnel.parent": "underlay",
                    "ip-tunnel.mtu": "mtu", "ipv4.addresses": "address", "ipv4.routes": "routes"}.get(k)
             if not key:
-                raise CliError(f"{k}: для GRE можно ip-tunnel.remote|local|parent|mtu, ipv4.addresses, ipv4.routes")
+                raise E("{k}: for GRE use ip-tunnel.remote|local|parent|mtu, ipv4.addresses, ipv4.routes", k=k)
             t[key] = int(v) if key == "mtu" else [x for x in re.split(r"[,\s]+", v) if x] if key == "routes" else (v or None)
         ctx.api.put("/api/gre", {"tunnels": g})
     else:
-        raise CliError("VPN настраивается в вебе (VPN → импорт конфига) или /interface wireguard; "
-                       "здесь — nmcli c up|down")
-    ctx.out(f"Connection '{c['name']}' successfully updated.")
+        raise E("VPN is configured in the web UI (VPN → import config) or /interface wireguard; here — nmcli c up|down")
+    _say(ctx, "Connection '{name}' successfully updated.", name=c["name"])
 
 
 def _nm_updown(ctx, name: str, up: bool):
@@ -487,15 +523,30 @@ def _nm_updown(ctx, name: str, up: bool):
         ctx.api.put("/api/lan" if cfg["id"] == "lan1" else f"/api/lan/segments/{cfg['id']}", cfg)
     elif c["kind"] == "vpn":
         path = "/api/vpn/l2tp" if c["name"] == "l2tp" else f"/api/vpn/{c['name']}"
-        cfg = {**ctx.api.get(path)["config"], "enabled": up}
-        ctx.api.put(path, cfg)
+        ctx.api.put(path, {**ctx.api.get(path)["config"], "enabled": up})
     elif c["kind"] == "gre":
         g = ctx.api.get("/api/gre")["config"]["tunnels"]
         ctx.api.put("/api/gre", {"tunnels": [{**t, "enabled": up} if t["name"] == c["name"] else t for t in g]})
     elif c["kind"] == "wan2":
-        cfg = {**c["data"]["config"], "enabled": up}
-        ctx.api.put("/api/wan/wan2", cfg)
+        ctx.api.put("/api/wan/wan2", {**c["data"]["config"], "enabled": up})
     else:
-        raise CliError("основной WAN не выключается — иначе пропадёт доступ к роутеру. "
-                       "Режим: nmcli c mod wan ipv4.method disabled")
-    ctx.out(f"Connection '{c['name']}' successfully {'activated' if up else 'deactivated'}.")
+        raise E("the main WAN can't be turned off — you would lose access to the router. "
+                "Mode: nmcli c mod wan ipv4.method disabled")
+    _say(ctx, "Connection '{name}' successfully activated." if up else "Connection '{name}' successfully deactivated.",
+         name=c["name"])
+
+
+# --- язык подсказок ----------------------------------------------------------------------------------
+def switch_language(ctx, word: str, arg: str | None) -> str | None:
+    """sl, sl1/sl2/sl3, sl en|ru|he, switch-language … -> новый язык (None — только показать текущий)."""
+    choice = word[2:] if word not in ("sl", "switch-language", "switch_language") else (arg or "")
+    choice = choice.strip(" .").lower()
+    if not choice:
+        _say(ctx, "Language: {name}. Switch: sl1 English · sl2 Русский · sl3 עברית", name=term.LANG_NAMES[ctx.lang])
+        return None
+    lang = term.LANGS.get(choice)
+    if not lang:
+        raise E("sl: language en, ru or he (sl1, sl2, sl3)")
+    ctx.lang = lang
+    _say(ctx, "Language: {name}. Switch: sl1 English · sl2 Русский · sl3 עברית", name=term.LANG_NAMES[lang])
+    return lang
