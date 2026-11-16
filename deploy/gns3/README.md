@@ -11,7 +11,7 @@ GNS3 сам создаёт интерфейсы eth0..ethN по числу ад�
    - Image: `outpost-gate-pro:gns3`
    - Adapters: 2 (eth0 = WAN, eth1 = LAN) или больше
    - Environment: `ROUTER_MODE=gns3`
-   - Console type: telnet; HTTP-порт для веб-интерфейса: 8000
+   - Console type: telnet; HTTP-порт для веб-интерфейса: 80
 3. Перетащить узел на схему, соединить eth0 с NAT/облаком, eth1 — с клиентами.
 
 ## Сохранение конфига

@@ -299,7 +299,7 @@ def test_firewall_monitor_rules(env):
     rs = firewall.ruleset("eth0", "br-lan", False, firewall.VpnRules("wg0", True, False, False), monitor=rules)
     line = "ip saddr { 10.0.0.0/24 } udp dport 161 accept   # SNMP"
     assert line in rs and rs.index(line) < rs.index('iifname "wg0" drop')
-    assert "tcp dport 8000 accept   # Prometheus /metrics" in rs
+    assert "tcp dport 80 accept   # Prometheus /metrics" in rs
     text = firewall.system_rules("eth0", False, None, monitor=rules)["input"]
     assert "SNMP (UDP 161) от 10.0.0.0/24 — разрешён" in text
     # только LAN (списки пустые) — дополнительных правил нет
@@ -320,4 +320,4 @@ def test_initconfig_and_host_ssh_port(monkeypatch):
     assert initconfig.main(["x", json.dumps({"wan": {"interface": "ens18", "mode": "static"}, "lan": {}})]) == 2
     monkeypatch.setenv("HOST_SSH_PORT", "22")
     monkeypatch.setenv("CLI_SSH_PORT", "2222")
-    assert firewall.management_ports() == [22, 2222, 8000]
+    assert firewall.management_ports() == [22, 80, 2222]

@@ -13,7 +13,7 @@ class ApiError(Exception):
 
 class Api:
     def __init__(self, base: str | None = None, token: str | None = None):
-        self.base = base or os.getenv("OG_API") or f"http://127.0.0.1:{os.getenv('API_PORT', '8000')}"
+        self.base = base or os.getenv("OG_API") or f"http://127.0.0.1:{os.getenv('API_PORT', '80')}"
         self.token = token or os.getenv("OG_TOKEN") or self._local_token()
 
     @staticmethod
