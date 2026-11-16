@@ -24,6 +24,8 @@ class L2tpConfig(BaseModel):
     nat: bool = True
     killswitch: bool = True
     management: bool = False      # пускать к роутеру из туннеля (веб, SSH, CLI, ping)
+    reconnect: bool = True        # сторож: PPP не поднят дольше 3,5 минут — переподключиться
+    router_direct: bool = True    # режим full: трафик самого роутера — напрямую через WAN
     mtu: int = Field(1400, ge=1280, le=1460)
 
     @field_validator("server")
@@ -71,7 +73,7 @@ class L2tpConfig(BaseModel):
         return {"enabled": self.enabled, "server": self.server, "psk": self.psk,
                 "username": self.username, "password": self.password, "mode": self.mode,
                 "networks": self.networks, "nat": self.nat, "killswitch": self.killswitch, "mtu": self.mtu,
-                "management": self.management}
+                "management": self.management, "reconnect": self.reconnect, "router_direct": self.router_direct}
 
     @classmethod
     def from_yaml(cls, d: dict | None) -> "L2tpConfig":
@@ -91,3 +93,6 @@ class L2tpStatus(BaseModel):
     rx_bytes: int = 0
     tx_bytes: int = 0
     error: str | None = None
+    reconnects: int = 0
+    last_reconnect: float | None = None
+    reconnect_reason: str | None = None

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>OutpostGate Pro</title>
-  <link rel="stylesheet" href="css/style.css?v=0.18.2">
+  <link rel="stylesheet" href="css/style.css?v=0.19.0">
 </head>
 <body>
   <!-- вход -->
@@ -749,6 +749,7 @@
           <div><span class="label">Handshake</span><span id="vs-hs">—</span></div>
           <div><span class="label">Сервер</span><span id="vs-endpoint">—</span></div>
           <div><span class="label">Трафик</span><span id="vs-traffic">—</span></div>
+          <div><span class="label">Переподключения</span><span id="vs-reconnect">—</span></div>
           <div class="full"><span class="label">Ключ роутера</span><code id="vs-pub">—</code></div>
         </div>
         <span id="vs-error" class="error"></span>
@@ -776,6 +777,8 @@
         <label class="check"><input type="checkbox" name="killswitch"> Kill switch: туннель упал — устройства LAN без интернета</label>
         <label class="check"><input type="checkbox" name="nat"> NAT в туннель (сервер не знает сеть LAN)</label>
         <label class="check"><input type="checkbox" name="management"> Управление через туннель (веб, SSH, CLI и ping с телефона через тот же VPN)</label>
+        <label class="check"><input type="checkbox" name="reconnect"> Переподключать, если нет связи с сервером (нет handshake дольше 3,5 минут: сон хоста, смена сети)</label>
+        <label class="check"><input type="checkbox" name="router_direct"> Трафик самого роутера — напрямую через WAN (режим «весь трафик»: обновления, Docker Hub, apt не зависят от VPN)</label>
         <p class="hint">NAT нужен для обычного VPN-сервера, где у клиента один адрес. Выключите для site-to-site:
           тогда центр видит реальные адреса устройств LAN и может к ним подключаться (телефоны, удалённая помощь).
           «Управление через туннель» открывает роутер по его адресу в туннеле (например, http://10.8.1.2:8000) другим клиентам того же сервера;
@@ -820,6 +823,7 @@
             <div><span class="label">Сервер</span><span id="ls2-server">—</span></div>
             <div><span class="label">Адрес в туннеле</span><span id="ls2-ip">—</span></div>
             <div><span class="label">Трафик</span><span id="ls2-traffic">—</span></div>
+            <div><span class="label">Переподключения</span><span id="ls2-reconnect">—</span></div>
           </div>
           <span id="ls2-error" class="error"></span>
         </div>
@@ -834,6 +838,8 @@
           <label class="check"><input type="checkbox" name="killswitch"> Kill switch: туннель упал — устройства LAN без интернета</label>
           <label class="check"><input type="checkbox" name="nat"> NAT в туннель (сервер не знает сеть LAN)</label>
           <label class="check"><input type="checkbox" name="management"> Управление через туннель (веб, SSH, CLI и ping с телефона через тот же VPN)</label>
+          <label class="check"><input type="checkbox" name="reconnect"> Переподключать, если нет связи с сервером (PPP не поднят дольше 3,5 минут)</label>
+          <label class="check"><input type="checkbox" name="router_direct"> Трафик самого роутера — напрямую через WAN (режим «весь трафик»: обновления, Docker Hub, apt не зависят от VPN)</label>
 
           <h2>Подключение</h2>
           <label class="row">Сервер <input name="server" placeholder="vpn.example.com"></label>
@@ -1425,8 +1431,8 @@
 
   </main>
 
-  <script src="js/i18n-dict.js?v=0.18.2"></script>
-  <script src="js/i18n.js?v=0.18.2"></script>
-  <script src="js/app.js?v=0.18.2"></script>
+  <script src="js/i18n-dict.js?v=0.19.0"></script>
+  <script src="js/i18n.js?v=0.19.0"></script>
+  <script src="js/app.js?v=0.19.0"></script>
 </body>
 </html>
