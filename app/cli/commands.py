@@ -62,6 +62,8 @@ class Ctx:
     numbers: dict = field(default_factory=dict)     # меню -> [объект строки 0, строки 1, ...]
     detail: bool = False                            # print detail
     sleep: Callable[[float], None] = time.sleep
+    lang: str = "en"                                # язык подсказок Linux-синтаксиса: en / ru / he (sl1/sl2/sl3)
+    color: bool = False                             # цвета: только живая сессия с терминалом
 
 
 # --- вывод -------------------------------------------------------------------------------------------
