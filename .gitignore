@@ -5,3 +5,8 @@ __pycache__/
 data/
 .pytest_cache/
 .backup/
+
+# скрипты обновлений (одноразовые, история — в коммитах)
+/update_*.sh
+/stage*.sh
+/hotfix_*.sh
