@@ -13,7 +13,9 @@ import os
 import subprocess
 import sys
 
-from app.cli import commands, linux
+import re
+
+from app.cli import commands, linux, term
 from app.cli.api import Api, ApiError
 
 BANNER = """
@@ -21,11 +23,6 @@ BANNER = """
   Команды как в MikroTik RouterOS:  /ip address print · /ip route print · /ping 8.8.8.8
   ? — помощь · Tab — подсказки · сокращения: /ip addr pr · /system shell — bash · quit — выход
   linux — перейти на синтаксис Linux (ip a, nmcli)
-"""
-BANNER_LINUX = """
-  OutpostGate Pro — VPN-шлюз удалённого сотрудника
-  Синтаксис Linux:  ip a · ip r · nmcli c · ss -tlnp · ping -c 3 samba
-  help — список · /… — команда RouterOS · routeros — синтаксис MikroTik · exit — выход
 """
 SYNTAX_QUESTION = """
   Синтаксис командной строки / CLI syntax:
@@ -35,7 +32,15 @@ SYNTAX_QUESTION = """
 """
 SWITCH_LINUX = ("linux", ":linux", "/linux")
 SWITCH_ROUTEROS = ("routeros", "mikrotik", "ros", ":routeros", "/routeros")
-LINUX_WORDS = ["ip", "nmcli", "bridge", "ss", "ping", "traceroute", "hostname", "help", "routeros", "exit", "clear"]
+LINUX_WORDS = ["ip", "nmcli", "bridge", "ss", "ping", "traceroute", "hostname", "help", "routeros", "exit", "clear",
+               "sl1", "sl2", "sl3"]
+SL_RE = re.compile(r"^(sl[123]|sl\.?(?:en|ru|he)|sl|switch-language|switch_language)(?:\s+(\S+))?$", re.I)
+
+
+def use_color() -> bool:
+    """Цвета — только человеку: терминал есть, TERM не dumb, вход не от Ansible (OG_SYNTAX)."""
+    return sys.stdout.isatty() and os.getenv("TERM", "xterm") != "dumb" and not os.getenv("OG_SYNTAX") \
+        and not os.getenv("NO_COLOR")
 
 
 def run_bash() -> None:
@@ -54,15 +59,29 @@ def _whoami(api: Api) -> tuple[str, str, str]:
     return me["name"], me["role"], me.get("identity") or "outpost-gate-pro"
 
 
+def get_prefs(api: Api) -> dict:
+    try:
+        p = api.get("/api/auth/cli")
+        return p if isinstance(p, dict) else {}
+    except ApiError:
+        return {}
+
+
 def get_syntax(api: Api) -> str | None:
     """Синтаксис: OG_SYNTAX (Ansible, логин admin+cet1024w — всегда RouterOS) или выбор пользователя."""
     forced = os.getenv("OG_SYNTAX")
     if forced in ("routeros", "linux"):
         return forced
+    return get_prefs(api).get("syntax")
+
+
+def save_lang(api: Api, lang: str) -> None:
+    if os.getenv("OG_SYNTAX"):
+        return
     try:
-        return api.get("/api/auth/cli").get("syntax")
+        api.put("/api/auth/cli", {"lang": lang})
     except ApiError:
-        return None
+        pass
 
 
 def save_syntax(api: Api, syntax: str) -> None:
@@ -100,13 +119,16 @@ def run_line(ctx: commands.Ctx, line: str, cwd: list[str], syntax: str) -> list[
 
 
 def run_one(ctx: commands.Ctx, line: str) -> int:
+    syntax = get_syntax(ctx.api) or "routeros"
+    if syntax == "linux" and not os.getenv("OG_SYNTAX"):
+        ctx.lang = get_prefs(ctx.api).get("lang") or "en"
     try:
-        run_line(ctx, line, [], get_syntax(ctx.api) or "routeros")
+        run_line(ctx, line, [], syntax)
         return 0
     except commands.Quit:
         return 0
     except commands.CliError as e:
-        print(str(e), file=sys.stderr)
+        print(term.tr(ctx.lang, str(e)) if syntax == "linux" else str(e), file=sys.stderr)
         return 1
 
 
@@ -116,6 +138,8 @@ def interactive(ctx: commands.Ctx, identity: str) -> None:
     if syntax is None:
         syntax, answered = ask_syntax()
         save_syntax(ctx.api, syntax)
+    ctx.color = use_color()
+    ctx.lang = get_prefs(ctx.api).get("lang") or "en"
     try:
         from prompt_toolkit import PromptSession
         from prompt_toolkit.completion import Completer, Completion
@@ -134,15 +158,16 @@ def interactive(ctx: commands.Ctx, identity: str) -> None:
                 for word in commands.complete(text, cwd, ctx):
                     yield Completion(word, start_position=-len(last))
 
+        from prompt_toolkit.formatted_text import ANSI
         session = PromptSession(history=InMemoryHistory(), completer=RouterCompleter(), complete_while_typing=False)
-        read = lambda p: session.prompt(p)
+        read = lambda p: session.prompt(ANSI(p))
     except ImportError:                                   # без prompt_toolkit — простой ввод
         read = input
 
-    print(BANNER_LINUX if syntax == "linux" else BANNER)
+    print(term.banner(ctx.color, ctx.lang) if syntax == "linux" else BANNER)
     while True:
         if syntax == "linux":
-            prompt = f"{ctx.user}@{identity}:~$ "
+            prompt = term.prompt(ctx.color, ctx.user, identity)
         else:
             prompt = f"[{ctx.user}@{identity}] {commands.path_str(cwd)}> " if cwd else f"[{ctx.user}@{identity}] > "
         try:
@@ -157,14 +182,26 @@ def interactive(ctx: commands.Ctx, identity: str) -> None:
             syntax = "linux" if word in SWITCH_LINUX else "routeros"
             cwd = []
             save_syntax(ctx.api, syntax)
-            print(BANNER_LINUX if syntax == "linux" else BANNER)
+            print(term.banner(ctx.color, ctx.lang) if syntax == "linux" else BANNER)
+            continue
+        m = SL_RE.match(line.strip())
+        if m:                                        # sl1 / sl2 / sl3 — язык подсказок
+            try:
+                new = linux.switch_language(ctx, m.group(1).lower(), m.group(2))
+                if new:
+                    save_lang(ctx.api, new)
+            except commands.CliError as e:
+                print(term.paint(ctx.color, term.tr(ctx.lang, str(e)), "red"))
             continue
         try:
             cwd = run_line(ctx, line, cwd, syntax)
         except commands.Quit:
             return
         except commands.CliError as e:
-            print(e)
+            if syntax == "linux" and not line.strip().startswith("/"):
+                print(term.paint(ctx.color, term.tr(ctx.lang, str(e)), "red"))
+            else:
+                print(e)
         except KeyboardInterrupt:
             print()
         if "identity set" in line and "name=" in line:     # обновить приглашение

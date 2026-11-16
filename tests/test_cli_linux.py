@@ -65,15 +65,15 @@ def test_ip_changes_go_to_config(lx):
     assert puts(cx, "POST")[-1][2]["dst_address"] == "0.0.0.0/0" and puts(cx, "POST")[-1][2]["gateway"] == "gre1"
     linux.execute(cx, "ip route del 192.168.20.0/24")
     assert puts(cx, "DELETE")[-1] == ("DELETE", "/api/ip/routes/1", None)
-    with pytest.raises(c.CliError, match="динамический"):
+    with pytest.raises(c.CliError, match="dynamic"):
         linux.execute(cx, "ip route del default")
     linux.execute(cx, "ip addr add 10.10.0.1/24 dev br-lan")
     assert puts(cx, "POST")[-1][2] == {"address": "10.10.0.1/24", "interface": "br-lan", "comment": "ip addr add"}
     linux.execute(cx, "ip addr del 192.168.88.1/24 dev br-lan")
     assert puts(cx, "DELETE")[-1] == ("DELETE", "/api/ip/addresses/1", None)
-    with pytest.raises(c.CliError, match="настройкой сегмента"):
+    with pytest.raises(c.CliError, match="comes from a segment"):
         linux.execute(cx, "ip addr del 172.18.0.2/16 dev eth0")
-    with pytest.raises(c.CliError, match="маску"):
+    with pytest.raises(c.CliError, match="mask"):
         linux.execute(cx, "ip addr add 10.10.0.1 dev br-lan")
     assert not any(r[:3] == ["ip", "route", "add"] for r in runs)           # в ядро напрямую — никогда
 
@@ -121,7 +121,7 @@ def test_nmcli_modify_and_updown(lx):
     assert puts(cx)[-1] == ("PUT", "/api/vpn/amneziawg", {"enabled": True, "addresses": ["10.8.1.2/32"]})
     linux.execute(cx, "nmcli c mod gre1 ipv4.routes 192.168.20.0/24,192.168.21.0/24")
     assert puts(cx)[-1][2]["tunnels"][0]["routes"] == ["192.168.20.0/24", "192.168.21.0/24"]
-    with pytest.raises(c.CliError, match="основной WAN"):
+    with pytest.raises(c.CliError, match="main WAN"):
         linux.execute(cx, "nmcli c down wan")
     with pytest.raises(c.CliError, match="ipv4.method"):
         linux.execute(cx, "nmcli c mod wan ipv4.method shared")
@@ -168,8 +168,70 @@ def test_without_paging_ignored(lx):
 def test_cli_prefs(tmp_path, monkeypatch):
     from app.services import cli_prefs
     monkeypatch.setattr(cli_prefs, "_path", lambda: tmp_path / "cli-prefs.json")
-    assert cli_prefs.get("admin") == {"syntax": None}
-    assert cli_prefs.set_syntax("admin", "linux") == {"syntax": "linux"}
-    assert cli_prefs.get("admin") == {"syntax": "linux"} and cli_prefs.get("ivan") == {"syntax": None}
+    assert cli_prefs.get("admin") == {"syntax": None, "lang": "en"}
+    assert cli_prefs.set_syntax("admin", "linux") == {"syntax": "linux", "lang": "en"}
+    assert cli_prefs.update("admin", lang="he") == {"syntax": "linux", "lang": "he"}
+    assert cli_prefs.get("ivan") == {"syntax": None, "lang": "en"}
     with pytest.raises(ValueError):
         cli_prefs.set_syntax("admin", "cisco")
+    with pytest.raises(ValueError):
+        cli_prefs.update("admin", lang="de")
+
+
+def test_translation_and_language_switch(lx):
+    from app.cli import term
+    cx, out, _ = lx
+    with pytest.raises(c.CliError) as e:
+        linux.execute(cx, "ip route del 10.99.0.0/16")
+    en = str(e.value)
+    assert en == "route 10.99.0.0/16 is not in the configuration"
+    assert term.tr("ru", en) == "маршрута 10.99.0.0/16 нет в конфигурации"
+    assert term.tr("he", en) == "הנתיב 10.99.0.0/16 לא בתצורה"
+    assert term.tr("ru", "что-то неизвестное") == "что-то неизвестное"          # нет шаблона — как есть
+    assert linux.switch_language(cx, "sl2", None) == "ru" and cx.lang == "ru"
+    assert out[-1].startswith("Язык: Русский")
+    linux.execute(cx, "nmcli c down lan2")
+    assert out[-1] == "Соединение 'lan2' выключено."
+    assert linux.switch_language(cx, "sl", "he") == "he" and linux.switch_language(cx, "sl.en", None) == "en"
+    assert linux.switch_language(cx, "sl", None) is None and out[-1].startswith("Language: English")
+    with pytest.raises(c.CliError):
+        linux.switch_language(cx, "sl", "de")
+    for lang in ("en", "ru", "he"):                                        # help на трёх языках, первая строка — язык
+        cx.lang = lang
+        out.clear()
+        linux.execute(cx, "help")
+        assert "sl1 English" in out[0] and len(out) > 15
+    # каждый шаблон каталога переводится и не теряет подстановок
+    for en_tpl, (ru, he) in term.CATALOG.items():
+        names = sorted(__import__("re").findall(r"\{(\w+)\}", en_tpl))
+        assert sorted(__import__("re").findall(r"\{(\w+)\}", ru)) == names, en_tpl
+        assert sorted(__import__("re").findall(r"\{(\w+)\}", he)) == names, en_tpl
+
+
+def test_shell_sl_regex():
+    for line, ok in (("sl1", True), ("sl3", True), ("sl ru", True), ("SL2", True), ("sl.he", True),
+                     ("switch-language en", True), ("sl", True), ("slx", False), ("ss -tlnp", False)):
+        assert bool(shell.SL_RE.match(line)) is ok, line
+
+
+def test_colors(lx):
+    from app.cli import term
+    cx, out, runs = lx
+    cx.color = True
+    linux.execute(cx, "ip -br a")
+    assert runs[-1] == ["ip", "-color=always", "-br", "address"]
+    linux.execute(cx, "ip -j a")
+    assert runs[-1] == ["ip", "-j", "address"]                           # JSON — без цветов
+    out.clear()
+    linux.execute(cx, "nmcli c")
+    assert out[0].startswith("\x1b[1m") and any("\x1b[32mamneziawg" in l for l in out)    # активное — зелёным
+    out.clear()
+    linux.execute(cx, "nmcli d")
+    assert any("\x1b[32mconnected" in l for l in out)
+    assert term.prompt(True, "admin", "office") == "\x1b[01;32madmin@office\x1b[00m:\x1b[01;34m~\x1b[00m$ "
+    assert term.prompt(False, "admin", "office") == "admin@office:~$ "
+    cx.color = False
+    out.clear()
+    linux.execute(cx, "nmcli c")
+    assert not any("\x1b" in l for l in out)                           # Ansible / скрипты — чистый текст
+    assert "\x1b" not in term.banner(False, "ru") and "OutpostGate" in term.banner(True, "he")

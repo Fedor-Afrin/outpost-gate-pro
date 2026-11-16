@@ -63,7 +63,8 @@ def me(request: Request):
 
 
 class CliPrefsBody(BaseModel):
-    syntax: str
+    syntax: str | None = None
+    lang: str | None = None
 
 
 @router.get("/cli")
@@ -83,7 +84,7 @@ def set_cli_prefs(body: CliPrefsBody, request: Request):
     if not user:
         raise HTTPException(401, "нужен вход")
     try:
-        return cli_prefs.set_syntax(user.name, body.syntax)
+        return cli_prefs.update(user.name, syntax=body.syntax, lang=body.lang)
     except ValueError as e:
         raise HTTPException(422, str(e))
 
