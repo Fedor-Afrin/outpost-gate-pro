@@ -56,6 +56,10 @@ class WgConfig(BaseModel):
     killswitch: bool = Field(True, description="В режиме full: без туннеля — без интернета")
     management: bool = Field(False, description="Пускать к роутеру из туннеля: веб, SSH, CLI и ping "
                                                 "(с телефона через тот же VPN-сервер). При выключенном NAT открыто и так")
+    reconnect: bool = Field(True, description="Сторож: нет handshake с сервером дольше 3,5 минут "
+                                              "(сон хоста, смена сети, сбой) — переподключиться")
+    router_direct: bool = Field(True, description="Режим full: трафик самого роутера (обновления, Docker Hub, apt) "
+                                                  "идёт напрямую через WAN — не зависит от VPN. Устройства LAN — через туннель")
     obfuscation: dict[str, str] = Field(
         default_factory=dict, description="Только AmneziaWG: Jc, Jmin, Jmax, S1, S2, H1–H4 …",
         examples=[{"Jc": "4", "Jmin": "40", "Jmax": "70", "S1": "0", "S2": "0", "H1": "1"}])
@@ -181,6 +185,8 @@ class WgConfig(BaseModel):
             "nat": self.nat,
             "killswitch": self.killswitch,
             "management": self.management,
+            "reconnect": self.reconnect,
+            "router-direct": self.router_direct,
             **({"obfuscation": self.obfuscation} if self.obfuscation else {}),
         }
 
@@ -196,6 +202,7 @@ class WgConfig(BaseModel):
             keepalive=p.get("persistent-keepalive", 25),
             mode=d.get("mode", "full"), nat=d.get("nat", True), killswitch=d.get("killswitch", True),
             management=d.get("management", False),
+            reconnect=d.get("reconnect", True), router_direct=d.get("router-direct", True),
             obfuscation=d.get("obfuscation") or {},
         )
 
@@ -310,3 +317,6 @@ class WgStatus(BaseModel):
     rx_bytes: int = 0
     tx_bytes: int = 0
     error: str | None = None
+    reconnects: int = 0                   # сколько раз сторож переподключал туннель
+    last_reconnect: float | None = None   # unix time
+    reconnect_reason: str | None = None

@@ -44,6 +44,8 @@ class VpnRules:
     inbound: bool         # из туннеля можно заходить в LAN и на роутер (site-to-site)
     ipsec_server: str | None = None   # L2TP/IPsec: впустить с WAN IKE, ESP и L2TP от этого сервера
     management: bool = False          # из туннеля можно на роутер: веб, SSH, CLI, ping (при NAT)
+    router_direct: bool = False       # режим full: свои соединения роутера — мимо туннеля (метка BYPASS)
+    tunnel_dns: tuple = ()            # DNS туннеля — к ним роутер ходит через туннель
 
 
 @dataclass
@@ -288,7 +290,30 @@ table inet {TABLE} {{
     chain postrouting {{
         type nat hook postrouting priority srcnat; policy accept;
 {post}    }}
-{render_multiwan(wans)}{render_qos(qos)}}}
+{render_multiwan(wans)}{render_qos(qos)}{render_router_direct(vpn)}}}
+"""
+
+
+PRIVATE_NETS = "10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, " \
+               "224.0.0.0/4, 255.255.255.255"
+
+
+def render_router_direct(vpn: "VpnRules | None") -> str:
+    """Режим full: соединения, начатые самим роутером, к публичным адресам — с меткой 0x200
+    (ip rule отправит их через WAN). Ответы на входящие (управление через туннель), частные сети,
+    DNS туннеля и ICMP (ping/traceroute проверяют туннель) — без метки, как раньше."""
+    if not vpn or not vpn.router_direct:
+        return ""
+    dns = ", ".join(vpn.tunnel_dns)
+    skip_dns = f"{I}ip daddr {{ {dns} }} return\n" if dns else ""
+    return f"""
+    chain output_direct {{
+        type route hook output priority mangle; policy accept;
+{I}ct direction reply return
+{I}meta l4proto {{ icmp, ipv6-icmp }} return
+{I}ip daddr {{ {PRIVATE_NETS} }} return
+{skip_dns}{I}meta nfproto ipv4 meta mark set meta mark or 0x200   # трафик самого роутера — через WAN
+    }}
 """
 
 
@@ -303,6 +328,9 @@ def system_rules(wan: str | None, wan_management: bool, vpn: VpnRules | None,
         inp.append(f"Из VPN ({vpn.iface}) — " + ("разрешено всё (site-to-site)" if vpn.inbound
                                                  else f"управление (порты {mgmt}) и ping, остальное — только ответы"
                                                  if vpn.management else "только ответы (режим NAT)"))
+    if vpn and vpn.router_direct:
+        inp.append("Свои соединения роутера (обновления, Docker Hub, apt) — напрямую через WAN, не через VPN; "
+                   "ping и DNS туннеля — через туннель")
     if gre:
         inp.append(f"GRE от {', '.join(gre.remotes)} — разрешён; из туннелей {', '.join(gre.ifaces)} — всё")
     if routing and routing.ospf_ifaces:
