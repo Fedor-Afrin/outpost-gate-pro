@@ -23,7 +23,7 @@ services:
     sysctls:
       net.ipv4.ip_forward: "1"
     ports:
-      - "8001:8000"
+      - "8001:80"
       - "2223:22"        # SSH -> CLI роутера
       - "1161:161/udp"   # SNMP (Monitoring → Экспорт), с хоста: snmpwalk -v2c -c public localhost:1161
       - "10060:10050"    # Zabbix agent: на хосте 10050 часто занят своим агентом

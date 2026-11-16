@@ -16,7 +16,7 @@ scrape_configs:
       - targets: ["host.docker.internal:8001"]
         labels:
           router: dev
-      # роутер в сети (режим host / ВМ / железо): адрес LAN и порт веб-интерфейса 8000
-      # - targets: ["192.168.88.1:8000"]
+      # роутер в сети (режим host / ВМ / железо): адрес LAN и порт веб-интерфейса 80
+      # - targets: ["192.168.88.1:80"]
       #   labels:
       #     router: office

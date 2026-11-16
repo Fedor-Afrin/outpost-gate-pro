@@ -322,7 +322,7 @@ def firewall_rules(cfg: MonitoringConfig | None = None) -> list[tuple[str, int, 
         return []
     out = []
     if cfg.prometheus.enabled and cfg.prometheus.allowed:
-        out.append(("tcp", int(os.getenv("API_PORT", "8000")), cfg.prometheus.allowed, "Prometheus /metrics"))
+        out.append(("tcp", int(os.getenv("API_PORT", "80")), cfg.prometheus.allowed, "Prometheus /metrics"))
     if cfg.snmp.enabled and cfg.snmp.allowed:
         out.append(("udp", 161, cfg.snmp.allowed, "SNMP"))
     if cfg.zabbix.enabled and cfg.zabbix.server:
