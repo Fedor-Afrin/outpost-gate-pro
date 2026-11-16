@@ -850,7 +850,7 @@ def dns_static_remove(ctx, pos, named):
 
 def service_print(ctx, pos, named):
     wan_open = ctx.api.get("/api/lan")["config"]["wan_management"]
-    api_port, ssh_port = os.getenv("API_PORT", "8000"), os.getenv("CLI_SSH_PORT", "22")
+    api_port, ssh_port = os.getenv("API_PORT", "80"), os.getenv("CLI_SSH_PORT", "22")
     table(ctx, ["name", "port", "available-from"],
           [["www", api_port, "LAN, VPN" + (", WAN" if wan_open else "")],
            ["ssh", ssh_port, "LAN, VPN" + (", WAN" if wan_open else "")]],
@@ -1667,7 +1667,7 @@ def monitoring_print(ctx, pos, named):
              ("client-accounting", bool(snap.get("accounting"))),
              ("ping-targets", ",".join(c["ping_targets"]) or "-"),
              ("prometheus", c["prometheus"]["enabled"]),
-             ("prometheus-url", "http://<router>:8000/metrics" if c["prometheus"]["enabled"] else None),
+             ("prometheus-url", "http://<router>/metrics" if c["prometheus"]["enabled"] else None),
              ("prometheus-token", "yes" if c["prometheus"].get("token") else "no"),
              ("snmp", c["snmp"]["enabled"]), ("snmp-running", d["snmp"]["running"]),
              ("zabbix-agent", c["zabbix"]["enabled"]), ("zabbix-running", d["zabbix"]["running"]),

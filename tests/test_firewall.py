@@ -71,7 +71,7 @@ def test_lockout_protection(env):
         firewall_rules.add_rule(FirewallRule(chain="input", in_zone="lan", action="drop"))
     with pytest.raises(firewall_rules.RuleError):
         firewall_rules.add_rule(FirewallRule(chain="input", in_zone="any", protocol="tcp",
-                                             dst_ports="8000-9000", action="reject"))
+                                             dst_ports="80-90", action="reject"))
     # точечные запреты можно
     firewall_rules.add_rule(FirewallRule(chain="input", in_zone="lan", src="192.168.88.50", action="drop"))
     firewall_rules.add_rule(FirewallRule(chain="input", in_zone="lan", protocol="tcp", dst_ports="22", action="drop"))
@@ -107,7 +107,7 @@ def test_port_forward_checks(env):
     assert 'dnat ip to 192.168.88.20:80 comment "fwd:1"' in applied[-1]
     assert "ct status dnat accept" in applied[-1]
     cases = [
-        (PortForward(wan_port="8000", to_ip="192.168.88.20"), "управлением"),     # порт веб-интерфейса
+        (PortForward(wan_port="80", to_ip="192.168.88.20"), "управлением"),       # порт веб-интерфейса
         (PortForward(wan_port="8070-8090", to_ip="192.168.88.30"), "уже пробрасывается"),
         (PortForward(wan_port="9000", to_ip="10.0.0.5"), "не в сети LAN"),
         (PortForward(wan_port="9000", to_ip="192.168.88.1"), "самого роутера"),

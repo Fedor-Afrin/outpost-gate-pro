@@ -18,7 +18,7 @@
 #       снимает FORWARD DROP, оставшийся от Docker, и даёт серверу свои DNS (порт WAN забирает роутер,
 #       и DNS провайдера системе больше не приходят — без этого не соберётся образ при обновлении);
 #    4. собирает образ, пишет первый /etc/outpost-gate-pro/router.yaml и запускает контейнер.
-#  Дальше все настройки — в веб-интерфейсе: http://<адрес LAN>:8000
+#  Дальше все настройки — в веб-интерфейсе: http://<адрес LAN>  (порт 80; другой — --api-port)
 # =============================================================================
 set -euo pipefail
 
@@ -70,7 +70,7 @@ usage() {
   --lan-address A/M         адрес роутера в LAN (192.168.88.1/24)
   --wan-management yes|no   веб и SSH роутера с WAN (по умолчанию yes, если вы подключены через WAN)
   --password PASS           пароль admin при первом запуске (иначе admin без пароля, вход только из LAN)
-  --api-port N  --cli-port N   порты веба (8000) и CLI по SSH (2222)
+  --api-port N  --cli-port N   порты веба (80) и CLI по SSH (2222); с --update — сменить порт веба
   --identity NAME           имя роутера
   --keep-config | --new-config   что делать с существующим router.yaml
   --host-dns "D1 D2"        DNS для самого сервера, когда порт WAN у роутера (по умолчанию 1.1.1.1 8.8.8.8)
@@ -272,7 +272,7 @@ wizard() {
     for n in "${LAN_PORTS[@]}"; do
         if in_list "$n" "${SSH_IFS[@]}"; then
             warn "вы подключены через $n: в LAN-мосте он потеряет свой адрес, SSH отвалится"
-            warn "дальше заходить надо будет из LAN: http://<адрес LAN>:8000"
+            warn "дальше заходить надо будет из LAN: http://<адрес LAN>"
             yesno "Всё равно отдать $n в LAN?" n || die "уберите $n из LAN и запустите снова"
         fi
     done
@@ -283,7 +283,7 @@ wizard() {
     if [[ -z "$WAN_MGMT" ]]; then
         local def=n; in_list "$WAN" "${SSH_IFS[@]}" && def=y
         [[ -n "$WAN2" ]] && in_list "$WAN2" "${SSH_IFS[@]}" && def=y
-        echo "  Управление с WAN: веб (порт ${API_PORT:-8000}), CLI (SSH ${CLI_PORT:-2222}) и SSH сервера ($HOST_SSH_PORT)"
+        echo "  Управление с WAN: веб (порт ${API_PORT:-80}), CLI (SSH ${CLI_PORT:-2222}) и SSH сервера ($HOST_SSH_PORT)"
         echo "  будут доступны со стороны провайдера. Для ВМ в домашней сети это обычно нужно."
         if yesno "Открыть управление с WAN?" "$def"; then WAN_MGMT=yes; else WAN_MGMT=no; fi
     fi
@@ -292,7 +292,11 @@ wizard() {
         yesno "Оставить закрытым?" n || WAN_MGMT=yes
     fi
 
-    API_PORT=${API_PORT:-8000}; CLI_PORT=${CLI_PORT:-2222}
+    if [[ -z "$API_PORT" ]]; then                     # веб на 80; занят (nginx, apache…) — 8000
+        API_PORT=80
+        if port_busy 80; then warn "порт 80 на сервере занят — веб будет на 8000 (другой: --api-port N)"; API_PORT=8000; fi
+    fi
+    CLI_PORT=${CLI_PORT:-2222}
     if [[ $YES -eq 0 && $PASSWORD_SET -eq 0 && ! -s "$CONF_DIR/users.json" ]]; then
         echo "  Пароль admin (не короче 8 символов). Enter — без пароля: тогда войти можно только из LAN."
         local p2
@@ -607,8 +611,8 @@ summary() {
     wan_ip=$(iface_ipv4 "$WAN" | cut -d, -f1); wan_ip=${wan_ip%/*}
     hr
     echo "${G}${B}OutpostGate Pro установлен.${N}"
-    [[ ${#LAN_PORTS[@]} -gt 0 ]] && echo "  Веб из LAN:   http://$lan_ip:$API_PORT"
-    [[ "$WAN_MGMT" == yes && -n "$wan_ip" ]] && echo "  Веб с WAN:    http://$wan_ip:$API_PORT"
+    [[ ${#LAN_PORTS[@]} -gt 0 ]] && echo "  Веб из LAN:   $(web_url "$lan_ip")"
+    [[ "$WAN_MGMT" == yes && -n "$wan_ip" ]] && echo "  Веб с WAN:    $(web_url "$wan_ip")"
     echo "  CLI:          ssh -p $CLI_PORT admin@${lan_ip}"
     echo "  Журнал:       docker logs -f $CONTAINER"
     echo "  Обновление:   скрипт update_pro_*.sh в $ROOT, затем  sudo ./install.sh --update"
@@ -636,6 +640,17 @@ do_install() {
     summary
 }
 
+port_busy() {
+    # кто-то уже слушает TCP-порт на сервере (кроме самого роутера — его контейнер мы перезапускаем)
+    local p=$1 line
+    line=$(ss -ltnpH "sport = :$p" 2>/dev/null) || return 1
+    [[ -n "$line" ]] && ! grep -q "uvicorn" <<<"$line"
+}
+
+web_url() {
+    if [[ "${API_PORT:-80}" == 80 ]]; then echo "http://$1"; else echo "http://$1:$API_PORT"; fi
+}
+
 load_state() {
     [[ -f "$STATE" ]] || die "роутер не установлен этим скриптом (нет $STATE)"
     # shellcheck disable=SC1090
@@ -645,10 +660,17 @@ load_state() {
 
 do_update() {
     [[ $EUID -eq 0 ]] || die "запустите через sudo"
-    local cli_dns=$HOST_DNS
+    local cli_dns=$HOST_DNS cli_port=$API_PORT
     load_state
     [[ -n "$cli_dns" ]] && HOST_DNS=$cli_dns          # sudo ./install.sh --update --host-dns "..."
     [[ -f "$DEPLOY/.env" ]] || die "нет $DEPLOY/.env — запустите установку заново"
+    if [[ -n "$cli_port" && "$cli_port" != "$API_PORT" ]]; then   # sudo ./install.sh --update --api-port 80
+        [[ "$cli_port" =~ ^[0-9]+$ ]] && (( cli_port >= 1 && cli_port <= 65535 )) || die "--api-port: число 1–65535"
+        port_busy "$cli_port" && die "порт $cli_port на сервере уже занят: $(ss -ltnpH "sport = :$cli_port" | head -1)"
+        say "Веб-интерфейс: порт $API_PORT → $cli_port"
+        API_PORT=$cli_port
+        sed -i "s/^API_PORT=.*/API_PORT=$API_PORT/" "$DEPLOY/.env" "$STATE"
+    fi
     if [[ -z "$WAN_MODE" ]]; then                    # установлено до появления WAN_MODE в install.state
         WAN_MODE=dhcp
         grep -qsE "^Name=(.* )?$WAN( |\$)|interface-name:$WAN;" "$NETWORKD_FILE" "$NM_FILE" || WAN_MODE=none
@@ -662,6 +684,8 @@ do_update() {
     docker_build
     "${COMPOSE[@]}" up -d --force-recreate
     wait_healthy "$API_PORT" && ok "роутер работает" || die "роутер не ответил — docker logs $CONTAINER"
+    local lan_ip=${LAN_ADDR%/*}
+    [[ -n "$lan_ip" ]] && echo "  Веб:          $(web_url "$lan_ip")"
     docker image prune -f >/dev/null 2>&1 || true
 }
 

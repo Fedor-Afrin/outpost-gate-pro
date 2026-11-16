@@ -68,7 +68,7 @@ class RoutingRules:
 
 def management_ports() -> list[int]:
     """Веб/API и SSH-доступ к CLI роутера; в режиме host — и SSH самого сервера (HOST_SSH_PORT)."""
-    ports = {int(os.getenv("API_PORT", "8000")), int(os.getenv("CLI_SSH_PORT", "22"))}
+    ports = {int(os.getenv("API_PORT", "80")), int(os.getenv("CLI_SSH_PORT", "22"))}
     host_ssh = os.getenv("HOST_SSH_PORT", "")
     if host_ssh.isdigit():
         ports.add(int(host_ssh))

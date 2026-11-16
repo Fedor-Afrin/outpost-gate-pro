@@ -10,7 +10,7 @@
 
 | Способ | Порт роутера | Что нужно указать |
 |---|---|---|
-| Prometheus | TCP 8000 (`/metrics`, порт веб-интерфейса) | токен (желательно), «откуда ещё» |
+| Prometheus | TCP 80 (`/metrics`, порт веб-интерфейса) | токен (желательно), «откуда ещё» |
 | SNMP | UDP 161 | v2c: community; v3: пользователь и два пароля |
 | Zabbix agent | TCP 10050 | адрес Zabbix server; при желании ServerActive |
 
@@ -30,7 +30,7 @@
 
 Проверка без Prometheus:
 ```bash
-curl -H "Authorization: Bearer ТОКЕН" http://192.168.88.1:8000/metrics
+curl -H "Authorization: Bearer ТОКЕН" http://192.168.88.1/metrics
 ```
 
 **Dev-режим (роутер в Docker на этом же компьютере).** Prometheus ходит на
