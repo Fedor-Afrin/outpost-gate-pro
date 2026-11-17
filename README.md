@@ -158,3 +158,10 @@ tests/          pytest
 
 ## Author
 Fedor Afrin — network & telecom engineer. Built with the help of Claude (Anthropic).
+
+## License
+Copyright (C) 2026 Fedor Afrin
+
+This program is free software; you can redistribute it and/or modify it under the terms of the
+GNU General Public License version 2 as published by the Free Software Foundation.
+It is distributed WITHOUT ANY WARRANTY. See the [LICENSE](LICENSE) file for details.
