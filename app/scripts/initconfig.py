@@ -46,9 +46,9 @@ def main(argv: list[str]) -> int:
         errs = getattr(e, "errors", None)
         msg = "; ".join(str(x.get("msg", "")).removeprefix("Value error, ") for x in errs()) if callable(errs) \
             else getattr(e, "message", None) or str(e)
-        print(f"ошибка в параметрах: {msg}", file=sys.stderr)
+        print(f"invalid parameters: {msg}", file=sys.stderr)
         return 2
-    sys.stdout.write("# создано install.sh — дальше настройки меняются в веб-интерфейсе\n")
+    sys.stdout.write("# created by install.sh; from now on change the settings in the web UI\n")
     sys.stdout.write(yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
     return 0
 

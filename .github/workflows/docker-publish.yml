@@ -47,3 +47,19 @@ jobs:
             org.opencontainers.image.licenses=GPL-2.0-only
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Build and push the installer image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./installer/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/fedor-afrin/outpost-gate-pro-installer:latest
+            ghcr.io/fedor-afrin/outpost-gate-pro-installer:${{ github.ref_name }}
+            ghcr.io/fedor-afrin/outpost-gate-pro-installer:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/Fedor-Afrin/outpost-gate-pro
+            org.opencontainers.image.title=OutpostGate Pro installer
+            org.opencontainers.image.licenses=GPL-2.0-only
