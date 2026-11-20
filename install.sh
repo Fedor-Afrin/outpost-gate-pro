@@ -1,37 +1,40 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  install.sh — установка OutpostGate Pro на виртуальную машину или сервер (режим host)
+#  install.sh — install OutpostGate Pro on a virtual machine or a server (host mode)
 #
-#    sudo ./install.sh                 установка: мастер спросит порты WAN / WAN2 / LAN и пароль
-#    sudo ./install.sh --update        пересобрать и перезапустить (после update_pro_*.sh)
-#    sudo ./install.sh --status        состояние
-#    sudo ./install.sh --uninstall     удалить (настройки и данные остаются)
-#    sudo ./install.sh --uninstall --purge   удалить вместе с настройками и данными
-#    ./install.sh --help               все параметры (установка без вопросов — для Ansible и т. п.)
+#    sudo ./install.sh                 install: the wizard asks for the WAN / WAN2 / LAN ports and a password
+#    sudo ./install.sh --update        update to the new version and restart
+#    sudo ./install.sh --status        status
+#    sudo ./install.sh --uninstall     remove (the settings and data are kept)
+#    sudo ./install.sh --uninstall --purge   remove together with the settings and data
+#    ./install.sh --help               all options (unattended install for Ansible etc.)
 #
-#  Что делает установка:
-#    1. ставит Docker (официальный репозиторий) и запрещает ему трогать фаервол (daemon.json:
-#       iptables=false) — иначе Docker закрывает транзит (FORWARD DROP);
-#    2. убирает выбранные порты из-под netplan/systemd-networkd и NetworkManager —
-#       ими управляет роутер (порт SSH, через который вы подключены, не трогается без вашего согласия);
-#    3. включает маршрутизацию (ip_forward), модули ядра (WireGuard, L2TP, QoS);
-#       снимает FORWARD DROP, оставшийся от Docker, и даёт серверу свои DNS (порт WAN забирает роутер,
-#       и DNS провайдера системе больше не приходят — без этого не соберётся образ при обновлении);
-#    4. собирает образ, пишет первый /etc/outpost-gate-pro/router.yaml и запускает контейнер.
-#  Дальше все настройки — в веб-интерфейсе: http://<адрес LAN>  (порт 80; другой — --api-port)
+#  What the installation does:
+#    1. installs Docker (official repository) and stops it from touching the firewall (daemon.json:
+#       iptables=false); otherwise Docker blocks transit traffic (FORWARD DROP);
+#    2. takes the selected ports away from netplan/systemd-networkd and NetworkManager:
+#       the router manages them (the SSH port you are connected through is not touched without asking);
+#    3. enables routing (ip_forward) and the kernel modules (WireGuard, L2TP, GRE, QoS);
+#       clears a FORWARD DROP left by Docker and gives the server its own DNS (the router takes the WAN
+#       port, so the provider's DNS no longer reaches the system; without it updates cannot download);
+#    4. builds or downloads the image, writes the first /etc/outpost-gate-pro/router.yaml, starts the container.
+#  After that, everything is configured in the web UI: http://<LAN address>  (port 80; another one: --api-port)
 # =============================================================================
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 DEPLOY="$ROOT/deploy/host"
 COMPOSE=(docker compose -f "$DEPLOY/docker-compose.yml" --env-file "$DEPLOY/.env")
-P="${OG_PREFIX:-}"              # корень для тестов установщика (обычно пусто)
+P="${OG_PREFIX:-}"              # root for installer tests (normally empty)
 SYS_NET="${OG_SYS_NET:-/sys/class/net}"
 CONF_DIR=$P/etc/outpost-gate-pro
 DATA_DIR=$P/var/lib/outpost-gate-pro
 STATE="$CONF_DIR/install.state"
 IMAGE=outpost-gate-pro:latest
 CONTAINER=outpost-gate-pro
+DEFAULT_REMOTE=ghcr.io/fedor-afrin/outpost-gate-pro:latest
+REMOTE_IMAGE="${OG_IMAGE:-}"   # set: download this ready image (GHCR) instead of building it here
+INSTALLER="${OG_INSTALLER:-script}"   # script | container (the installer image sets it)
 NETWORKD_FILE=$P/etc/systemd/network/05-outpost-gate-unmanaged.network
 NM_FILE=$P/etc/NetworkManager/conf.d/99-outpost-gate.conf
 SYSCTL_FILE=$P/etc/sysctl.d/99-outpost-gate.conf
@@ -40,15 +43,15 @@ DAEMON_JSON=$P/etc/docker/daemon.json
 RESOLVED_FILE=$P/etc/systemd/resolved.conf.d/outpost-gate.conf
 MODULES=(wireguard ip_gre ppp_generic l2tp_ppp pppox sch_htb sch_fq_codel sch_ingress cls_u32 act_police nf_conntrack 8021q)
 
-# --- вывод --------------------------------------------------------------------------------------
+# --- output --------------------------------------------------------------------------------------
 if [[ -t 1 ]]; then B=$'\e[1m'; G=$'\e[32m'; Y=$'\e[33m'; R=$'\e[31m'; C=$'\e[36m'; N=$'\e[0m'; else B= G= Y= R= C= N=; fi
 say()  { echo "${C}>>>${N} $*"; }
 ok()   { echo "${G}  ✓${N} $*"; }
 warn() { echo "${Y}  !${N} $*"; }
-die()  { echo "${R}ОШИБКА:${N} $*" >&2; exit 1; }
+die()  { echo "${R}ERROR:${N} $*" >&2; exit 1; }
 hr()   { echo "${C}--------------------------------------------------------------------------${N}"; }
 
-# --- параметры ----------------------------------------------------------------------------------
+# --- options ----------------------------------------------------------------------------------
 ACTION=install; YES=0; PURGE=0
 WAN=""; WAN_MODE=""; WAN_ADDR=""; WAN_GW=""; WAN_DNS=""
 WAN2=""; WAN2_MODE=""; WAN2_ADDR=""; WAN2_GW=""; WAN2_DNS=""; MULTIWAN_MODE=""
@@ -56,24 +59,25 @@ LAN=""; LAN_ADDR=""; WAN_MGMT=""; PASSWORD=""; PASSWORD_SET=0
 API_PORT=""; CLI_PORT=""; IDENTITY=""; KEEP_CONFIG=""; HOST_DNS=""
 
 usage() {
-    sed -n '3,9p' "$0" | sed 's/^#  \{0,1\}//'
+    sed -n '3,9p' "$0" | sed -e 's/^#//' -e 's/^  //'
     cat <<'EOF'
 
-Установка без вопросов (всё, что не задано, — по умолчанию):
-  -y, --yes                 не спрашивать; значения по умолчанию
-  --wan IF                  порт провайдера (по умолчанию — порт маршрута по умолчанию)
-  --wan-mode MODE           none — адрес задаёт система (netplan), dhcp, static
-  --wan-address A/M --wan-gateway GW --wan-dns D1,D2     для static
-  --wan2 IF [--wan2-mode dhcp|static --wan2-address .. --wan2-gateway ..]   второй провайдер
+Unattended install (anything not given uses the default):
+  -y, --yes                 do not ask; use the defaults
+  --wan IF                  provider port (default: the port of the default route)
+  --wan-mode MODE           none: the system (netplan) sets the address; dhcp; static
+  --wan-address A/M --wan-gateway GW --wan-dns D1,D2     for static
+  --wan2 IF [--wan2-mode dhcp|static --wan2-address .. --wan2-gateway ..]   second provider
   --multiwan failover|balance
-  --lan IF1,IF2             порты LAN («-» — без LAN); по умолчанию — все остальные, кроме порта SSH
-  --lan-address A/M         адрес роутера в LAN (192.168.88.1/24)
-  --wan-management yes|no   веб и SSH роутера с WAN (по умолчанию yes, если вы подключены через WAN)
-  --password PASS           пароль admin при первом запуске (иначе admin без пароля, вход только из LAN)
-  --api-port N  --cli-port N   порты веба (80) и CLI по SSH (2222); с --update — сменить порт веба
-  --identity NAME           имя роутера
-  --keep-config | --new-config   что делать с существующим router.yaml
-  --host-dns "D1 D2"        DNS для самого сервера, когда порт WAN у роутера (по умолчанию 1.1.1.1 8.8.8.8)
+  --lan IF1,IF2             LAN ports ("-" = no LAN); default: all others except the SSH port
+  --lan-address A/M         router address in the LAN (192.168.88.1/24)
+  --wan-management yes|no   router web UI and SSH from WAN (default yes if you are connected via WAN)
+  --password PASS           admin password for the first start (otherwise admin has no password, login from LAN only)
+  --api-port N  --cli-port N   web UI port (80) and SSH CLI port (2222); with --update: change the web port
+  --identity NAME           router name
+  --keep-config | --new-config   what to do with an existing router.yaml
+  --image REF               download a ready image instead of building (ghcr.io/fedor-afrin/outpost-gate-pro:latest)
+  --host-dns "D1 D2"        DNS for the server itself while the router owns the WAN port (default 1.1.1.1 8.8.8.8)
 EOF
 }
 
@@ -103,51 +107,53 @@ while [[ $# -gt 0 ]]; do
         --cli-port) CLI_PORT="$2"; shift ;;
         --identity) IDENTITY="$2"; shift ;;
         --host-dns) HOST_DNS="${2//,/ }"; shift ;;
+        --image) REMOTE_IMAGE="$2"; shift ;;
         --keep-config) KEEP_CONFIG=yes ;;
         --new-config) KEEP_CONFIG=no ;;
         -h|--help) usage; exit 0 ;;
-        *) die "неизвестный параметр $1 (см. --help)" ;;
+        *) die "unknown option $1 (see --help)" ;;
     esac
     shift
 done
 
-# --- вопросы -------------------------------------------------------------------------------------
-ask() {   # ask "Вопрос" "по умолчанию" -> REPLY
+# --- questions -------------------------------------------------------------------------------------
+ask() {   # ask "Question" "default" -> REPLY
     local q="$1" def="${2:-}"
     if [[ $YES -eq 1 ]]; then REPLY="$def"; return; fi
     if [[ -n "$def" ]]; then read -rp "  $q [${def}]: " REPLY; else read -rp "  $q: " REPLY; fi
     REPLY="${REPLY:-$def}"
 }
 
-yesno() {   # yesno "Вопрос" y|n
+yesno() {   # yesno "Question" y|n
     local def="$2" hint
-    [[ "$def" == y ]] && hint="Д/н" || hint="д/Н"
+    [[ "$def" == y ]] && hint="Y/n" || hint="y/N"
     if [[ $YES -eq 1 ]]; then [[ "$def" == y ]]; return; fi
     read -rp "  $1 [$hint]: " REPLY
     REPLY="${REPLY:-$def}"
-    [[ "${REPLY,,}" =~ ^(y|yes|д|да)$ ]]
+    [[ "${REPLY,,}" =~ ^(y|yes)$ ]]
 }
 
 in_list() { local x="$1" item; shift; for item in "$@"; do [[ "$item" == "$x" ]] && return 0; done; return 1; }
 
-# --- проверки -----------------------------------------------------------------------------------
+# --- checks -----------------------------------------------------------------------------------
 preflight() {
-    [[ $EUID -eq 0 || -n "$P" ]] || die "запустите через sudo: sudo $0"
-    [[ -f "$DEPLOY/docker-compose.yml" && -f "$ROOT/Dockerfile" ]] || die "запускайте из папки проекта OutpostGate Pro"
-    [[ -e /.dockerenv && -z "$P" ]] && die "это контейнер — установка нужна на виртуальной машине или сервере"
-    command -v systemctl >/dev/null || die "нужен systemd"
-    command -v python3 >/dev/null || { say "Ставлю python3"; apt-get update -qq && apt-get install -y -qq python3 >/dev/null; }
+    [[ $EUID -eq 0 || -n "$P" ]] || die "run it with sudo: sudo $0"
+    [[ -f "$ROOT/Dockerfile" || -n "$REMOTE_IMAGE" ]] || REMOTE_IMAGE=$DEFAULT_REMOTE   # no sources: use GHCR
+    [[ -f "$DEPLOY/docker-compose.yml" ]] || die "run it from the OutpostGate Pro project folder"
+    [[ -e /.dockerenv && -z "$P" ]] && die "this is a container: install on a virtual machine or a server"
+    command -v systemctl >/dev/null || die "systemd is required"
+    command -v python3 >/dev/null || { say "Installing python3"; apt-get update -qq && apt-get install -y -qq python3 >/dev/null; }
     # shellcheck disable=SC1091
     . "$P/etc/os-release"
     OS_ID="$ID"; OS_CODENAME="${VERSION_CODENAME:-}"
     case "$OS_ID" in
-        ubuntu|debian) ok "система: $PRETTY_NAME" ;;
-        *) warn "система $PRETTY_NAME не проверялась (рассчитано на Ubuntu 22.04/24.04 и Debian 12/13)"
-           yesno "Продолжить?" n || exit 1 ;;
+        ubuntu|debian) ok "system: $PRETTY_NAME" ;;
+        *) warn "$PRETTY_NAME has not been tested (made for Ubuntu 22.04/24.04 and Debian 12/13)"
+           yesno "Continue?" n || exit 1 ;;
     esac
 }
 
-# --- интерфейсы ----------------------------------------------------------------------------------
+# --- interfaces ----------------------------------------------------------------------------------
 list_ifaces() {
     local n
     for p in "$SYS_NET"/*; do
@@ -158,7 +164,7 @@ list_ifaces() {
     done
 }
 
-ssh_ifaces() {   # интерфейсы, через которые сейчас идут SSH-сессии к серверу
+ssh_ifaces() {   # interfaces that current SSH sessions to the server come through
     local addrs a
     addrs=$(ss -Htn state established 2>/dev/null | awk '{print $3}' | grep -E ":(${HOST_SSH_PORT:-22})$" \
         | sed -e 's/:[0-9]*$//' -e 's/^\[::ffff://' -e 's/^\[//' -e 's/\]$//' | sort -u || true)
@@ -174,81 +180,81 @@ host_ssh_port() { sshd -T 2>/dev/null | awk '/^port /{print $2; exit}' || true; 
 
 show_ifaces() {
     local i=0 flags n
-    printf "  ${B}%-3s %-14s %-7s %-18s %-20s %s${N}\n" "#" "Порт" "Линк" "MAC" "IPv4" ""
+    printf "  ${B}%-3s %-14s %-7s %-18s %-20s %s${N}\n" "#" "Port" "Link" "MAC" "IPv4" ""
     for n in "${IFACES[@]}"; do
         i=$((i + 1)); flags=""
-        in_list "$n" "${SSH_IFS[@]}" && flags+="${Y}← вы подключены по SSH${N} "
-        [[ "$n" == "$DEF_IF" ]] && flags+="(маршрут по умолчанию)"
+        in_list "$n" "${SSH_IFS[@]}" && flags+="${Y}<- your SSH session${N} "
+        [[ "$n" == "$DEF_IF" ]] && flags+="(default route)"
         printf "  %-3s %-14s %-7s %-18s %-20s %s\n" "$i" "$n" "$(cat "$SYS_NET/$n/operstate" 2>/dev/null)" \
             "$(cat "$SYS_NET/$n/address" 2>/dev/null)" "$(iface_ipv4 "$n")" "$flags"
     done
 }
 
-pick_iface() {   # pick_iface "вопрос" "по умолчанию" -> IFACE ("" — нет)
+pick_iface() {   # pick_iface "question" "default" -> IFACE ("" = none)
     ask "$1" "$2"
     local v="$REPLY"
     [[ "$v" == "-" || -z "$v" ]] && { IFACE=""; return; }
     [[ "$v" =~ ^[0-9]+$ && $v -ge 1 && $v -le ${#IFACES[@]} ]] && v="${IFACES[$((v - 1))]}"
-    in_list "$v" "${IFACES[@]}" || die "нет порта $v"
+    in_list "$v" "${IFACES[@]}" || die "no such port: $v"
     IFACE="$v"
 }
 
 check_cidr() { python3 -c "import ipaddress,sys; ipaddress.ip_interface(sys.argv[1])" "$1" 2>/dev/null; }
 
-# --- мастер --------------------------------------------------------------------------------------
+# --- wizard --------------------------------------------------------------------------------------
 wizard() {
     mapfile -t IFACES < <(list_ifaces)
-    [[ ${#IFACES[@]} -ge 1 ]] || die "не найдено ни одного сетевого порта"
+    [[ ${#IFACES[@]} -ge 1 ]] || die "no network ports found"
     HOST_SSH_PORT=$(host_ssh_port); HOST_SSH_PORT=${HOST_SSH_PORT:-22}
     mapfile -t SSH_IFS < <(ssh_ifaces)
     DEF_IF=$(default_iface)
-    hr; say "Сетевые порты сервера"; show_ifaces; hr
-    [[ ${#IFACES[@]} -lt 2 ]] && warn "один порт: роутер будет без LAN — для проверки добавьте ВМ второй сетевой адаптер"
+    hr; say "Server network ports"; show_ifaces; hr
+    [[ ${#IFACES[@]} -lt 2 ]] && warn "only one port: the router will have no LAN; to test, add a second network adapter to the VM"
 
-    ask "Имя роутера" "${IDENTITY:-$(hostname -s)}"; IDENTITY="$REPLY"
+    ask "Router name" "${IDENTITY:-$(hostname -s)}"; IDENTITY="$REPLY"
 
     # WAN
-    if [[ -z "$WAN" ]]; then pick_iface "Порт WAN (провайдер; номер или имя)" "${DEF_IF:-${IFACES[0]}}"; WAN="$IFACE"; fi
-    in_list "$WAN" "${IFACES[@]}" || die "нет порта $WAN"
+    if [[ -z "$WAN" ]]; then pick_iface "WAN port (provider; number or name)" "${DEF_IF:-${IFACES[0]}}"; WAN="$IFACE"; fi
+    in_list "$WAN" "${IFACES[@]}" || die "no such port: $WAN"
     local wan_ssh=0; in_list "$WAN" "${SSH_IFS[@]}" && wan_ssh=1
     if [[ -z "$WAN_MODE" ]]; then
-        echo "  Как настраивать адрес WAN:"
-        echo "    none   — оставить системе (netplan/DHCP сервера): безопасно, если вы подключены через этот порт"
-        echo "    dhcp   — роутер сам получает адрес (DHCP-клиент роутера)"
-        echo "    static — вручную"
+        echo "  How to configure the WAN address:"
+        echo "    none   - leave it to the system (netplan/server DHCP): safe if you are connected through this port"
+        echo "    dhcp   - the router gets the address itself (router DHCP client)"
+        echo "    static - set by hand"
         local def=dhcp
         [[ $wan_ssh -eq 1 || -n "$(iface_ipv4 "$WAN")" ]] && def=none
-        ask "Режим WAN" "$def"; WAN_MODE="$REPLY"
+        ask "WAN mode" "$def"; WAN_MODE="$REPLY"
     fi
-    [[ "$WAN_MODE" =~ ^(none|dhcp|static)$ ]] || die "режим WAN: none, dhcp или static"
+    [[ "$WAN_MODE" =~ ^(none|dhcp|static)$ ]] || die "WAN mode: none, dhcp or static"
     if [[ "$WAN_MODE" == static ]]; then
-        [[ -n "$WAN_ADDR" ]] || { ask "IP-адрес WAN с маской" "$(iface_ipv4 "$WAN" | cut -d, -f1)"; WAN_ADDR="$REPLY"; }
-        [[ -n "$WAN_GW" ]] || { ask "Шлюз провайдера" "$(ip -4 route show default dev "$WAN" 2>/dev/null | awk '{print $3; exit}')"; WAN_GW="$REPLY"; }
-        [[ -n "$WAN_DNS" ]] || { ask "DNS (через запятую)" "1.1.1.1,8.8.8.8"; WAN_DNS="$REPLY"; }
+        [[ -n "$WAN_ADDR" ]] || { ask "WAN IP address with mask" "$(iface_ipv4 "$WAN" | cut -d, -f1)"; WAN_ADDR="$REPLY"; }
+        [[ -n "$WAN_GW" ]] || { ask "Provider gateway" "$(ip -4 route show default dev "$WAN" 2>/dev/null | awk '{print $3; exit}')"; WAN_GW="$REPLY"; }
+        [[ -n "$WAN_DNS" ]] || { ask "DNS (comma-separated)" "1.1.1.1,8.8.8.8"; WAN_DNS="$REPLY"; }
     fi
     if [[ $wan_ssh -eq 1 && "$WAN_MODE" != none ]]; then
-        warn "вы подключены через $WAN: при смене режима адрес может поменяться и SSH отвалится"
-        yesno "Всё равно отдать адрес $WAN роутеру?" n || WAN_MODE=none
+        warn "you are connected through $WAN: if the mode changes, the address may change and SSH will drop"
+        yesno "Give the $WAN address to the router anyway?" n || WAN_MODE=none
     fi
 
     # WAN2
     local rest=() n
     for n in "${IFACES[@]}"; do [[ "$n" != "$WAN" ]] && rest+=("$n"); done
     if [[ -z "$WAN2" && $YES -eq 0 && ${#rest[@]} -ge 2 ]]; then
-        ask "Второй провайдер WAN2 (порт; Enter — нет)" ""
+        ask "Second provider WAN2 (port; Enter = none)" ""
         WAN2="$REPLY"
         [[ "$WAN2" =~ ^[0-9]+$ ]] && WAN2="${IFACES[$((WAN2 - 1))]:-}"
     fi
     if [[ -n "$WAN2" ]]; then
-        in_list "$WAN2" "${rest[@]}" || die "WAN2: нет свободного порта $WAN2"
-        [[ -n "$WAN2_MODE" ]] || { ask "Режим WAN2 (dhcp / static)" dhcp; WAN2_MODE="$REPLY"; }
-        [[ "$WAN2_MODE" =~ ^(dhcp|static)$ ]] || die "режим WAN2: dhcp или static"
+        in_list "$WAN2" "${rest[@]}" || die "WAN2: no free port $WAN2"
+        [[ -n "$WAN2_MODE" ]] || { ask "WAN2 mode (dhcp / static)" dhcp; WAN2_MODE="$REPLY"; }
+        [[ "$WAN2_MODE" =~ ^(dhcp|static)$ ]] || die "WAN2 mode: dhcp or static"
         if [[ "$WAN2_MODE" == static ]]; then
-            [[ -n "$WAN2_ADDR" ]] || { ask "IP-адрес WAN2 с маской" ""; WAN2_ADDR="$REPLY"; }
-            [[ -n "$WAN2_GW" ]] || { ask "Шлюз WAN2" ""; WAN2_GW="$REPLY"; }
+            [[ -n "$WAN2_ADDR" ]] || { ask "WAN2 IP address with mask" ""; WAN2_ADDR="$REPLY"; }
+            [[ -n "$WAN2_GW" ]] || { ask "WAN2 gateway" ""; WAN2_GW="$REPLY"; }
         fi
-        [[ -n "$MULTIWAN_MODE" ]] || { ask "Два провайдера: failover (резерв) или balance (балансировка)" failover; MULTIWAN_MODE="$REPLY"; }
-        [[ "$MULTIWAN_MODE" =~ ^(failover|balance)$ ]] || die "режим: failover или balance"
+        [[ -n "$MULTIWAN_MODE" ]] || { ask "Two providers: failover or balance" failover; MULTIWAN_MODE="$REPLY"; }
+        [[ "$MULTIWAN_MODE" =~ ^(failover|balance)$ ]] || die "mode: failover or balance"
         local r2=(); for n in "${rest[@]}"; do [[ "$n" != "$WAN2" ]] && r2+=("$n"); done; rest=("${r2[@]}")
     fi
 
@@ -257,7 +263,7 @@ wizard() {
         local def=() n
         for n in "${rest[@]}"; do in_list "$n" "${SSH_IFS[@]}" || def+=("$n"); done
         local d; d=$(IFS=,; echo "${def[*]}"); [[ -z "$d" ]] && d="-"
-        ask "Порты LAN (через запятую; «-» — без LAN)" "$d"; LAN="$REPLY"
+        ask "LAN ports (comma-separated; \"-\" = no LAN)" "$d"; LAN="$REPLY"
     fi
     LAN_PORTS=()
     if [[ "$LAN" != "-" && -n "$LAN" ]]; then
@@ -265,73 +271,73 @@ wizard() {
         for n in "${parts[@]}"; do
             n=$(echo "$n" | xargs)
             [[ "$n" =~ ^[0-9]+$ ]] && n="${IFACES[$((n - 1))]:-}"
-            in_list "$n" "${rest[@]}" || die "LAN: порт $n занят WAN или не существует"
+            in_list "$n" "${rest[@]}" || die "LAN: port $n is used by WAN or does not exist"
             LAN_PORTS+=("$n")
         done
     fi
     for n in "${LAN_PORTS[@]}"; do
         if in_list "$n" "${SSH_IFS[@]}"; then
-            warn "вы подключены через $n: в LAN-мосте он потеряет свой адрес, SSH отвалится"
-            warn "дальше заходить надо будет из LAN: http://<адрес LAN>"
-            yesno "Всё равно отдать $n в LAN?" n || die "уберите $n из LAN и запустите снова"
+            warn "you are connected through $n: in the LAN bridge it loses its address and SSH will drop"
+            warn "after that, connect from the LAN: http://<LAN address>"
+            yesno "Put $n into the LAN anyway?" n || die "remove $n from the LAN and run again"
         fi
     done
-    [[ -n "$LAN_ADDR" ]] || { ask "Адрес роутера в LAN" "192.168.88.1/24"; LAN_ADDR="$REPLY"; }
-    check_cidr "$LAN_ADDR" || die "адрес LAN: например 192.168.88.1/24"
+    [[ -n "$LAN_ADDR" ]] || { ask "Router address in the LAN" "192.168.88.1/24"; LAN_ADDR="$REPLY"; }
+    check_cidr "$LAN_ADDR" || die "LAN address: for example 192.168.88.1/24"
 
-    # управление с WAN
+    # management from WAN
     if [[ -z "$WAN_MGMT" ]]; then
         local def=n; in_list "$WAN" "${SSH_IFS[@]}" && def=y
         [[ -n "$WAN2" ]] && in_list "$WAN2" "${SSH_IFS[@]}" && def=y
-        echo "  Управление с WAN: веб (порт ${API_PORT:-80}), CLI (SSH ${CLI_PORT:-2222}) и SSH сервера ($HOST_SSH_PORT)"
-        echo "  будут доступны со стороны провайдера. Для ВМ в домашней сети это обычно нужно."
-        if yesno "Открыть управление с WAN?" "$def"; then WAN_MGMT=yes; else WAN_MGMT=no; fi
+        echo "  Management from WAN: web UI (port ${API_PORT:-80}), CLI (SSH ${CLI_PORT:-2222}) and server SSH ($HOST_SSH_PORT)"
+        echo "  will be reachable from the provider side. For a VM in a home network this is usually needed."
+        if yesno "Allow management from WAN?" "$def"; then WAN_MGMT=yes; else WAN_MGMT=no; fi
     fi
     if [[ "$WAN_MGMT" == no ]] && in_list "$WAN" "${SSH_IFS[@]}"; then
-        warn "вы подключены через WAN ($WAN), а управление с WAN закрыто: SSH к серверу отвалится после запуска"
-        yesno "Оставить закрытым?" n || WAN_MGMT=yes
+        warn "you are connected via WAN ($WAN) but management from WAN is closed: SSH to the server will drop after the start"
+        yesno "Keep it closed?" n || WAN_MGMT=yes
     fi
 
-    if [[ -z "$API_PORT" ]]; then                     # веб на 80; занят (nginx, apache…) — 8000
+    if [[ -z "$API_PORT" ]]; then                     # web UI on 80; if busy (nginx, apache...), 8000
         API_PORT=80
-        if port_busy 80; then warn "порт 80 на сервере занят — веб будет на 8000 (другой: --api-port N)"; API_PORT=8000; fi
+        if port_busy 80; then warn "port 80 is busy on the server: the web UI will be on 8000 (another one: --api-port N)"; API_PORT=8000; fi
     fi
     CLI_PORT=${CLI_PORT:-2222}
     if [[ $YES -eq 0 && $PASSWORD_SET -eq 0 && ! -s "$CONF_DIR/users.json" ]]; then
-        echo "  Пароль admin (не короче 8 символов). Enter — без пароля: тогда войти можно только из LAN."
+        echo "  admin password (at least 8 characters). Enter = no password: then you can log in from the LAN only."
         local p2
         while true; do
-            read -rsp "  Пароль: " PASSWORD; echo
+            read -rsp "  Password: " PASSWORD; echo
             [[ -z "$PASSWORD" ]] && break
-            [[ ${#PASSWORD} -ge 8 ]] || { warn "не короче 8 символов"; continue; }
-            read -rsp "  Ещё раз: " p2; echo
+            [[ ${#PASSWORD} -ge 8 ]] || { warn "at least 8 characters"; continue; }
+            read -rsp "  Again: " p2; echo
             [[ "$PASSWORD" == "$p2" ]] && break
-            warn "пароли не совпали"
+            warn "the passwords do not match"
         done
     fi
-    [[ -n "$PASSWORD" && ${#PASSWORD} -lt 8 ]] && die "пароль — не короче 8 символов"
-    [[ "$PASSWORD" == *"'"* || "$PASSWORD" == *'$'* ]] && die "в пароле нельзя использовать ' и \$ (задайте такой пароль потом в вебе)"
+    [[ -n "$PASSWORD" && ${#PASSWORD} -lt 8 ]] && die "the password must be at least 8 characters"
+    [[ "$PASSWORD" == *"'"* || "$PASSWORD" == *'$'* ]] && die "the password cannot contain ' or \$ (set such a password later in the web UI)"
     if [[ -z "$PASSWORD" && "$WAN_MGMT" == yes && ! -s "$CONF_DIR/users.json" ]]; then
-        warn "admin без пароля входит только из LAN — через WAN войти не получится, пока не зададите пароль"
+        warn "admin without a password can log in from the LAN only; login via WAN works after you set a password"
     fi
 
-    hr; say "Итог"
-    echo "  Имя:            $IDENTITY"
+    hr; say "Summary"
+    echo "  Name:           $IDENTITY"
     echo "  WAN:            $WAN ($WAN_MODE${WAN_ADDR:+, $WAN_ADDR via $WAN_GW})"
-    [[ -n "$WAN2" ]] && echo "  WAN2:           $WAN2 ($WAN2_MODE${WAN2_ADDR:+, $WAN2_ADDR via $WAN2_GW}), режим $MULTIWAN_MODE"
-    echo "  LAN:            ${LAN_PORTS[*]:-нет} — роутер $LAN_ADDR, DHCP и DNS для LAN"
-    echo "  Управление:     с WAN — $WAN_MGMT; веб :$API_PORT, CLI ssh -p $CLI_PORT admin@…"
-    echo "  Пароль admin:   $([[ -n "$PASSWORD" ]] && echo задан || echo 'нет (вход из LAN)')"
+    [[ -n "$WAN2" ]] && echo "  WAN2:           $WAN2 ($WAN2_MODE${WAN2_ADDR:+, $WAN2_ADDR via $WAN2_GW}), mode $MULTIWAN_MODE"
+    echo "  LAN:            ${LAN_PORTS[*]:-none}, router $LAN_ADDR, DHCP and DNS for the LAN"
+    echo "  Management:     from WAN: $WAN_MGMT; web :$API_PORT, CLI ssh -p $CLI_PORT admin@..."
+    echo "  admin password: $([[ -n "$PASSWORD" ]] && echo set || echo 'none (login from LAN)')"
     hr
-    yesno "Устанавливаем?" y || exit 0
+    yesno "Install now?" y || exit 0
 }
 
 # --- Docker --------------------------------------------------------------------------------------
 install_docker() {
     if command -v docker >/dev/null && docker compose version >/dev/null 2>&1; then
-        ok "Docker $(docker --version | awk '{print $3}' | tr -d ,) и compose уже есть"
+        ok "Docker $(docker --version | awk '{print $3}' | tr -d ,) and compose are installed"
     else
-        say "Ставлю Docker (официальный репозиторий)"
+        say "Installing Docker (official repository)"
         apt-get update -qq
         apt-get install -y -qq ca-certificates curl gnupg >/dev/null
         install -m 0755 -d /etc/apt/keyrings
@@ -341,23 +347,23 @@ install_docker() {
                 > /etc/apt/sources.list.d/docker.list
             apt-get update -qq
             apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >/dev/null \
-                || { warn "репозиторий Docker не сработал — ставлю из репозитория дистрибутива"; rm -f /etc/apt/sources.list.d/docker.list
+                || { warn "the Docker repository failed, installing from the distribution repository"; rm -f /etc/apt/sources.list.d/docker.list
                      apt-get update -qq; apt-get install -y -qq docker.io docker-compose-v2 >/dev/null 2>&1 \
                          || apt-get install -y -qq docker.io docker-compose >/dev/null 2>&1 || true; }
         else
-            warn "нет доступа к download.docker.com — ставлю из репозитория дистрибутива"
+            warn "download.docker.com is not reachable, installing from the distribution repository"
             apt-get update -qq
             apt-get install -y -qq docker.io docker-compose-v2 >/dev/null 2>&1 \
                 || apt-get install -y -qq docker.io docker-compose >/dev/null 2>&1 || true
         fi
-        docker compose version >/dev/null 2>&1 || die "не удалось поставить docker compose"
-        ok "Docker установлен"
+        docker compose version >/dev/null 2>&1 || die "could not install docker compose"
+        ok "Docker installed"
     fi
     systemctl enable --now docker >/dev/null 2>&1 || true
 }
 
 configure_docker() {
-    # Docker не должен трогать фаервол: его FORWARD DROP закрывает транзит роутера
+    # Docker must not touch the firewall: its FORWARD DROP blocks the router's transit traffic
     mkdir -p "$(dirname "$DAEMON_JSON")" "$CONF_DIR"
     local changed
     changed=$(python3 - "$DAEMON_JSON" "$CONF_DIR/daemon.json.orig" <<'EOF'
@@ -368,11 +374,11 @@ if os.path.exists(path):
     try:
         cur = json.load(open(path))
     except ValueError:
-        sys.exit("daemon.json испорчен — исправьте вручную")
+        sys.exit("daemon.json is broken, fix it by hand")
     if not os.path.exists(orig):
         shutil.copy2(path, orig)
 elif not os.path.exists(orig):
-    open(orig, "w").write("")            # пустой: файла не было
+    open(orig, "w").write("")            # empty: there was no file
 new = {**cur, "iptables": False, "ip6tables": False}
 if new != cur:
     json.dump(new, open(path, "w"), indent=2)
@@ -383,81 +389,81 @@ EOF
         local others
         others=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -vx "$CONTAINER" || true)
         if [[ -n "$others" ]]; then
-            warn "на сервере работают другие контейнеры: $(echo $others)"
-            warn "без iptables у Docker их проброшенные порты и выход в интернет через NAT Docker перестанут работать"
-            yesno "Продолжить?" y || die "отменено"
+            warn "other containers are running on this server: $(echo $others)"
+            warn "without Docker iptables, their published ports and internet access through Docker NAT stop working"
+            yesno "Continue?" y || die "cancelled"
         fi
         systemctl restart docker
-        ok "Docker больше не трогает фаервол (daemon.json: iptables=false)"
+        ok "Docker no longer touches the firewall (daemon.json: iptables=false)"
     else
-        ok "Docker уже настроен (iptables=false)"
+        ok "Docker is already configured (iptables=false)"
     fi
     docker_forward_open
 }
 
 docker_forward_open() {
-    # Docker с iptables=false новых правил не ставит, но уже поставленные живут до перезагрузки:
-    # политика FORWARD DROP режет транзит LAN -> WAN (роутер сам пингует, клиенты — нет)
+    # with iptables=false Docker adds no new rules, but the existing ones live until a reboot:
+    # a FORWARD DROP policy cuts LAN -> WAN transit (the router itself can ping, clients cannot)
     local t
     for t in iptables ip6tables; do
         command -v "$t" >/dev/null 2>&1 || continue
         if "$t" -S FORWARD 2>/dev/null | grep -qx -- '-P FORWARD DROP'; then
-            "$t" -P FORWARD ACCEPT && ok "$t: снята политика FORWARD DROP, оставшаяся от Docker"
+            "$t" -P FORWARD ACCEPT && ok "$t: cleared the FORWARD DROP policy left by Docker"
         fi
     done
 }
 
 host_dns() {
-    # порт WAN у роутера: DNS провайдера системе (systemd-resolved) могут больше не приходить —
-    # тогда сервер не находит registry-1.docker.io и образ не собирается. Свои DNS — всегда, это безопасно:
-    # resolved спрашивает и их, и DNS порта, если они есть
+    # the router owns the WAN port: the provider's DNS may no longer reach systemd-resolved,
+    # and then the server cannot resolve registry-1.docker.io. Our own DNS servers are always safe:
+    # resolved asks both them and the port's DNS, if any
     [[ -n "$WAN" ]] || { rm -f "$RESOLVED_FILE"; return 0; }
     systemctl is-active -q systemd-resolved || return 0
     local dns=${HOST_DNS:-"1.1.1.1 8.8.8.8"}
     mkdir -p "$(dirname "$RESOLVED_FILE")"
     local new
-    new=$(printf '%s\n' "# OutpostGate Pro: DNS самого сервера — порт WAN у роутера (удаляется install.sh --uninstall)" \
+    new=$(printf '%s\n' "# OutpostGate Pro: DNS of the server itself, the WAN port belongs to the router (removed by install.sh --uninstall)" \
         "[Resolve]" "DNS=$dns" "FallbackDNS=9.9.9.9")
     if [[ "$(cat "$RESOLVED_FILE" 2>/dev/null)" != "$new" ]]; then
         echo "$new" > "$RESOLVED_FILE"
         systemctl restart systemd-resolved || true
     fi
-    ok "DNS сервера: $dns"
+    ok "server DNS: $dns"
 }
 
-# --- сеть сервера --------------------------------------------------------------------------------
+# --- server network --------------------------------------------------------------------------------
 load_modules() {
-    # модули ядра для VPN, GRE, QoS; список — и в автозагрузку (после перезагрузки сервера)
+    # kernel modules for VPN, GRE and QoS; the list also goes to autoload (after a server reboot)
     mkdir -p "$(dirname "$MODULES_FILE")"
     : > "$MODULES_FILE"
     local m
     for m in "${MODULES[@]}"; do
         modprobe "$m" 2>/dev/null && echo "$m" >> "$MODULES_FILE" || true
     done
-    ok "модули ядра: $(paste -sd' ' "$MODULES_FILE")"
+    ok "kernel modules: $(paste -sd' ' "$MODULES_FILE")"
 }
 
 host_network() {
-    say "Сеть сервера"
+    say "Server network"
     mkdir -p "$(dirname "$SYSCTL_FILE")"
     load_modules
 
     cat > "$SYSCTL_FILE" <<'EOF'
-# OutpostGate Pro: маршрутизатор
+# OutpostGate Pro: router
 net.ipv4.ip_forward = 1
-# два провайдера: ответы могут приходить не тем каналом, которым ушёл запрос
+# two providers: replies may arrive on another link than the request left by
 net.ipv4.conf.all.rp_filter = 2
 net.ipv4.conf.default.rp_filter = 2
 EOF
     if [[ -e /proc/sys/net/bridge/bridge-nf-call-iptables ]]; then
-        # мосты LAN не должны прогонять кадры через iptables/nftables (иначе фаервол режет трафик внутри LAN)
+        # LAN bridges must not pass frames through iptables/nftables (otherwise the firewall cuts traffic inside the LAN)
         printf '%s\n' "net.bridge.bridge-nf-call-iptables = 0" "net.bridge.bridge-nf-call-ip6tables = 0" \
             "net.bridge.bridge-nf-call-arptables = 0" >> "$SYSCTL_FILE"
     fi
     sysctl -q -p "$SYSCTL_FILE" >/dev/null 2>&1 || true
     ok "ip_forward=1, rp_filter=2"
 
-    # порты, которыми управляет роутер, — не трогает ни netplan/networkd, ни NetworkManager
+    # ports managed by the router: neither netplan/networkd nor NetworkManager touches them
     MANAGED=("${LAN_PORTS[@]}")
     [[ "$WAN_MODE" != none ]] && MANAGED+=("$WAN")
     [[ -n "$WAN2" ]] && MANAGED+=("$WAN2")
@@ -465,7 +471,7 @@ EOF
         if systemctl is-active -q systemd-networkd; then
             mkdir -p "$(dirname "$NETWORKD_FILE")"
             cat > "$NETWORKD_FILE" <<EOF
-# OutpostGate Pro: этими портами управляет роутер (удаляется install.sh --uninstall)
+# OutpostGate Pro: the router manages these ports (removed by install.sh --uninstall)
 [Match]
 Name=${MANAGED[*]}
 
@@ -473,31 +479,31 @@ Name=${MANAGED[*]}
 Unmanaged=yes
 EOF
             networkctl reload >/dev/null 2>&1 || systemctl restart systemd-networkd
-            ok "systemd-networkd (netplan) больше не управляет: ${MANAGED[*]}"
+            ok "systemd-networkd (netplan) no longer manages: ${MANAGED[*]}"
         fi
         if systemctl is-active -q NetworkManager; then
             mkdir -p "$(dirname "$NM_FILE")"
-            { echo "# OutpostGate Pro: этими портами управляет роутер"; echo "[keyfile]"
+            { echo "# OutpostGate Pro: the router manages these ports"; echo "[keyfile]"
               echo "unmanaged-devices=$(printf 'interface-name:%s;' "${MANAGED[@]}")"; } > "$NM_FILE"
             nmcli general reload >/dev/null 2>&1 || systemctl reload NetworkManager || true
-            ok "NetworkManager больше не управляет: ${MANAGED[*]}"
+            ok "NetworkManager no longer manages: ${MANAGED[*]}"
         fi
         for m in "${MANAGED[@]}"; do
-            in_list "$m" "${SSH_IFS[@]}" && continue          # свой SSH не рвём — адрес уберёт роутер
-            ip -4 addr flush dev "$m" 2>/dev/null || true      # адреса, оставшиеся от DHCP системы
+            in_list "$m" "${SSH_IFS[@]}" && continue          # do not break our own SSH, the router removes the address
+            ip -4 addr flush dev "$m" 2>/dev/null || true      # addresses left over from the system's DHCP
             ip link set "$m" up 2>/dev/null || true
         done
     fi
     host_dns
 }
 
-# --- конфигурация --------------------------------------------------------------------------------
+# --- configuration --------------------------------------------------------------------------------
 write_env() {
     local tz
     tz=$(timedatectl show -p Timezone --value 2>/dev/null || cat /etc/timezone 2>/dev/null || echo UTC)
     umask 077
     cat > "$DEPLOY/.env" <<EOF
-# OutpostGate Pro: параметры запуска (пишет install.sh)
+# OutpostGate Pro: run parameters (written by install.sh)
 API_PORT=$API_PORT
 CLI_SSH_PORT=$CLI_PORT
 HOST_SSH_PORT=$HOST_SSH_PORT
@@ -511,25 +517,45 @@ EOF
 }
 
 build_image() {
-    say "Собираю образ (первый раз — несколько минут)"
-    docker_build
-    ok "образ $IMAGE готов"
+    if [[ -n "$REMOTE_IMAGE" ]]; then
+        say "Downloading the image $REMOTE_IMAGE"
+    else
+        say "Building the image (a few minutes the first time)"
+    fi
+    get_image
+    ok "image $IMAGE is ready"
 }
 
-docker_build() {
-    # Сборка — в сети самого сервера (--network host): у Docker с iptables=false нет NAT для временных
-    # контейнеров сборки, и они не достучались бы до github.com / deb.debian.org
-    docker build --network host -t "$IMAGE" "$ROOT"
+get_image() {
+    if [[ -n "$REMOTE_IMAGE" ]]; then
+        # a ready image from GHCR (amd64 or arm64: Docker picks the right one)
+        docker pull "$REMOTE_IMAGE" && docker tag "$REMOTE_IMAGE" "$IMAGE"
+    else
+        # Build on the server's own network (--network host): with iptables=false Docker has no NAT for the
+        # temporary build containers, and they could not reach github.com / deb.debian.org
+        docker build --network host -t "$IMAGE" "$ROOT"
+    fi
+}
+
+update_hint() {   # how to update / remove, depending on how the router was installed
+    local act=${1:---update}
+    if [[ "$INSTALLER" == container ]]; then
+        echo "docker run --pull=always --rm -it --privileged --pid=host ghcr.io/fedor-afrin/outpost-gate-pro-installer:latest $act"
+    elif [[ "$act" == --update ]]; then
+        echo "git pull in $ROOT, then  sudo ./install.sh --update"
+    else
+        echo "sudo ./install.sh $act"
+    fi
 }
 
 write_config() {
     mkdir -p "$CONF_DIR" "$DATA_DIR"
     if [[ -s "$CONF_DIR/router.yaml" ]]; then
         if [[ -z "$KEEP_CONFIG" ]]; then
-            warn "уже есть $CONF_DIR/router.yaml"
-            if yesno "Оставить его (иначе — новый из ответов мастера, старый уйдёт в копию)?" y; then KEEP_CONFIG=yes; else KEEP_CONFIG=no; fi
+            warn "$CONF_DIR/router.yaml already exists"
+            if yesno "Keep it (otherwise a new one is made from your answers and the old one is backed up)?" y; then KEEP_CONFIG=yes; else KEEP_CONFIG=no; fi
         fi
-        if [[ "$KEEP_CONFIG" == yes ]]; then ok "router.yaml оставлен как есть"; return; fi
+        if [[ "$KEEP_CONFIG" == yes ]]; then ok "router.yaml kept as is"; return; fi
         cp -a "$CONF_DIR/router.yaml" "$CONF_DIR/router.yaml.before-install-$(date +%Y%m%d-%H%M%S)"
     fi
     local json
@@ -556,15 +582,15 @@ EOF
 )
     local tmp="$CONF_DIR/.router.yaml.new"
     if ! docker run --rm --network none --entrypoint python3 "$IMAGE" -m app.scripts.initconfig "$json" > "$tmp"; then
-        rm -f "$tmp"; die "не удалось собрать router.yaml (см. сообщение выше)"
+        rm -f "$tmp"; die "could not create router.yaml (see the message above)"
     fi
     mv "$tmp" "$CONF_DIR/router.yaml"
-    ok "записан $CONF_DIR/router.yaml"
+    ok "wrote $CONF_DIR/router.yaml"
 }
 
 save_state() {
     cat > "$STATE" <<EOF
-# что поставил install.sh — для --update и --uninstall
+# what install.sh installed, for --update and --uninstall
 INSTALLED=$(date -Iseconds)
 ROOT=$ROOT
 WAN=$WAN
@@ -576,10 +602,12 @@ CLI_PORT=$CLI_PORT
 WAN_MGMT=$WAN_MGMT
 WAN_MODE=$WAN_MODE
 HOST_DNS="$HOST_DNS"
+REMOTE_IMAGE=$REMOTE_IMAGE
+INSTALLER=$INSTALLER
 EOF
 }
 
-# --- запуск --------------------------------------------------------------------------------------
+# --- start --------------------------------------------------------------------------------------
 wait_healthy() {
     local port="$1" i
     for i in $(seq 1 90); do
@@ -592,41 +620,41 @@ wait_healthy() {
 }
 
 start() {
-    say "Запускаю"
+    say "Starting"
     if docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER"; then
-        docker rm -f "$CONTAINER" >/dev/null      # старый контейнер (в т.ч. от ручного запуска)
+        docker rm -f "$CONTAINER" >/dev/null      # old container (including one started by hand)
     fi
-    "${COMPOSE[@]}" up -d --force-recreate
+    "${COMPOSE[@]}" up -d --force-recreate --no-build
     if wait_healthy "$API_PORT"; then
-        ok "роутер запущен"
+        ok "the router is running"
     else
         docker logs --tail 40 "$CONTAINER" 2>&1 | sed 's/^/    /'
-        die "роутер не ответил за 3 минуты — см. журнал выше и: docker logs $CONTAINER"
+        die "the router did not answer within 3 minutes; see the log above and: docker logs $CONTAINER"
     fi
-    sed -i '/^ROUTER_ADMIN_PASSWORD=/d' "$DEPLOY/.env"        # пароль нужен только для первого запуска
+    sed -i '/^ROUTER_ADMIN_PASSWORD=/d' "$DEPLOY/.env"        # the password is needed only for the first start
 }
 
 summary() {
     local lan_ip=${LAN_ADDR%/*} wan_ip
     wan_ip=$(iface_ipv4 "$WAN" | cut -d, -f1); wan_ip=${wan_ip%/*}
     hr
-    echo "${G}${B}OutpostGate Pro установлен.${N}"
-    [[ ${#LAN_PORTS[@]} -gt 0 ]] && echo "  Веб из LAN:   $(web_url "$lan_ip")"
-    [[ "$WAN_MGMT" == yes && -n "$wan_ip" ]] && echo "  Веб с WAN:    $(web_url "$wan_ip")"
+    echo "${G}${B}OutpostGate Pro is installed.${N}"
+    [[ ${#LAN_PORTS[@]} -gt 0 ]] && echo "  Web from LAN: $(web_url "$lan_ip")"
+    [[ "$WAN_MGMT" == yes && -n "$wan_ip" ]] && echo "  Web from WAN: $(web_url "$wan_ip")"
     echo "  CLI:          ssh -p $CLI_PORT admin@${lan_ip}"
-    echo "  Журнал:       docker logs -f $CONTAINER"
-    echo "  Обновление:   скрипт update_pro_*.sh в $ROOT, затем  sudo ./install.sh --update"
-    echo "  Удаление:     sudo ./install.sh --uninstall   (настройки остаются в $CONF_DIR и $DATA_DIR)"
+    echo "  Log:          docker logs -f $CONTAINER"
+    echo "  Update:       $(update_hint)"
+    echo "  Remove:       $(update_hint --uninstall)   (settings stay in $CONF_DIR and $DATA_DIR)"
     if [[ -z "$PASSWORD" && $HAD_USERS -eq 0 ]]; then
-        echo "  ${Y}Задайте пароль admin:${N} веб → плашка «Пароль не задан» (вход без пароля — только из LAN)"
+        echo "  ${Y}Set the admin password:${N} web UI -> \"Password not set\" banner (login without a password works from the LAN only)"
     fi
     hr
 }
 
-# --- действия ------------------------------------------------------------------------------------
+# --- actions ------------------------------------------------------------------------------------
 do_install() {
     preflight
-    hr; echo "${B}OutpostGate Pro — установка на сервер${N}"; hr
+    hr; echo "${B}OutpostGate Pro: server installation${N}"; hr
     install_docker
     HAD_USERS=0; [[ -s "$CONF_DIR/users.json" ]] && HAD_USERS=1
     wizard
@@ -641,7 +669,7 @@ do_install() {
 }
 
 port_busy() {
-    # кто-то уже слушает TCP-порт на сервере (кроме самого роутера — его контейнер мы перезапускаем)
+    # something already listens on the TCP port (except the router itself: we restart its container)
     local p=$1 line
     line=$(ss -ltnpH "sport = :$p" 2>/dev/null) || return 1
     [[ -n "$line" ]] && ! grep -q "uvicorn" <<<"$line"
@@ -652,48 +680,58 @@ web_url() {
 }
 
 load_state() {
-    [[ -f "$STATE" ]] || die "роутер не установлен этим скриптом (нет $STATE)"
+    [[ -f "$STATE" ]] || die "the router was not installed by this script ($STATE is missing)"
     # shellcheck disable=SC1090
     . "$STATE"
     read -ra LAN_PORTS <<<"$LAN_PORTS"
+    ROOT=${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}
+    if [[ -f "$ROOT/deploy/host/.env" ]]; then      # the router was installed from another folder
+        DEPLOY="$ROOT/deploy/host"
+        COMPOSE=(docker compose -f "$DEPLOY/docker-compose.yml" --env-file "$DEPLOY/.env")
+    else
+        ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+    fi
 }
 
 do_update() {
-    [[ $EUID -eq 0 ]] || die "запустите через sudo"
-    local cli_dns=$HOST_DNS cli_port=$API_PORT
+    [[ $EUID -eq 0 ]] || die "run it with sudo"
+    local cli_dns=$HOST_DNS cli_port=$API_PORT cli_image=$REMOTE_IMAGE cli_inst=$INSTALLER
     load_state
+    [[ -n "$cli_image" ]] && REMOTE_IMAGE=$cli_image      # sudo ./install.sh --update --image ...
+    [[ "$cli_inst" == container ]] && INSTALLER=container
+    [[ -f "$ROOT/Dockerfile" || -n "$REMOTE_IMAGE" ]] || REMOTE_IMAGE=$DEFAULT_REMOTE
     [[ -n "$cli_dns" ]] && HOST_DNS=$cli_dns          # sudo ./install.sh --update --host-dns "..."
-    [[ -f "$DEPLOY/.env" ]] || die "нет $DEPLOY/.env — запустите установку заново"
+    [[ -f "$DEPLOY/.env" ]] || die "$DEPLOY/.env is missing; run the installation again"
     if [[ -n "$cli_port" && "$cli_port" != "$API_PORT" ]]; then   # sudo ./install.sh --update --api-port 80
-        [[ "$cli_port" =~ ^[0-9]+$ ]] && (( cli_port >= 1 && cli_port <= 65535 )) || die "--api-port: число 1–65535"
-        port_busy "$cli_port" && die "порт $cli_port на сервере уже занят: $(ss -ltnpH "sport = :$cli_port" | head -1)"
-        say "Веб-интерфейс: порт $API_PORT → $cli_port"
+        [[ "$cli_port" =~ ^[0-9]+$ ]] && (( cli_port >= 1 && cli_port <= 65535 )) || die "--api-port: a number 1-65535"
+        port_busy "$cli_port" && die "port $cli_port is already busy on the server: $(ss -ltnpH "sport = :$cli_port" | head -1)"
+        say "Web UI: port $API_PORT -> $cli_port"
         API_PORT=$cli_port
         sed -i "s/^API_PORT=.*/API_PORT=$API_PORT/" "$DEPLOY/.env" "$STATE"
     fi
-    if [[ -z "$WAN_MODE" ]]; then                    # установлено до появления WAN_MODE в install.state
+    if [[ -z "$WAN_MODE" ]]; then                    # installed before install.state had WAN_MODE
         WAN_MODE=dhcp
         grep -qsE "^Name=(.* )?$WAN( |\$)|interface-name:$WAN;" "$NETWORKD_FILE" "$NM_FILE" || WAN_MODE=none
     fi
-    sed -i '/^WAN_MODE=/d;/^HOST_DNS=/d' "$STATE"
-    printf 'WAN_MODE=%s\nHOST_DNS="%s"\n' "$WAN_MODE" "$HOST_DNS" >> "$STATE"
-    load_modules                                     # новые модули (например, ip_gre) — без переустановки
+    sed -i '/^WAN_MODE=/d;/^HOST_DNS=/d;/^REMOTE_IMAGE=/d;/^INSTALLER=/d' "$STATE"
+    printf 'WAN_MODE=%s\nHOST_DNS="%s"\nREMOTE_IMAGE=%s\nINSTALLER=%s\n' "$WAN_MODE" "$HOST_DNS" "$REMOTE_IMAGE" "$INSTALLER" >> "$STATE"
+    load_modules                                     # new modules (for example ip_gre) without reinstalling
     docker_forward_open
     host_dns
-    say "Обновляю: пересборка образа и перезапуск"
-    docker_build
-    "${COMPOSE[@]}" up -d --force-recreate
-    wait_healthy "$API_PORT" && ok "роутер работает" || die "роутер не ответил — docker logs $CONTAINER"
+    say "Updating: new image and restart"
+    get_image
+    "${COMPOSE[@]}" up -d --force-recreate --no-build
+    wait_healthy "$API_PORT" && ok "the router is running" || die "the router did not answer: docker logs $CONTAINER"
     local lan_ip=${LAN_ADDR%/*}
-    [[ -n "$lan_ip" ]] && echo "  Веб:          $(web_url "$lan_ip")"
+    [[ -n "$lan_ip" ]] && echo "  Web:          $(web_url "$lan_ip")"
     docker image prune -f >/dev/null 2>&1 || true
 }
 
 do_status() {
-    if [[ -f "$STATE" ]]; then load_state; echo "  Установлен: $INSTALLED, из $ROOT"; fi
-    docker ps -a --filter "name=^${CONTAINER}$" --format '  Контейнер: {{.Names}} — {{.Status}}' 2>/dev/null || echo "  Docker недоступен"
-    if [[ -n "${API_PORT:-}" ]] && wait_healthy_once "$API_PORT"; then ok "API отвечает на :$API_PORT"; else warn "API не отвечает"; fi
-    echo "  Порты под управлением роутера: $(grep -h '^Name=' "$NETWORKD_FILE" 2>/dev/null | cut -d= -f2 || echo —)"
+    if [[ -f "$STATE" ]]; then load_state; echo "  Installed: $INSTALLED, from $ROOT"; fi
+    docker ps -a --filter "name=^${CONTAINER}$" --format '  Container: {{.Names}}: {{.Status}}' 2>/dev/null || echo "  Docker is not available"
+    if [[ -n "${API_PORT:-}" ]] && wait_healthy_once "$API_PORT"; then ok "the API answers on :$API_PORT"; else warn "the API does not answer"; fi
+    echo "  Ports managed by the router: $(grep -h '^Name=' "$NETWORKD_FILE" 2>/dev/null | cut -d= -f2 || echo -)"
 }
 
 wait_healthy_once() {
@@ -701,14 +739,14 @@ wait_healthy_once() {
 }
 
 do_uninstall() {
-    [[ $EUID -eq 0 ]] || die "запустите через sudo"
+    [[ $EUID -eq 0 ]] || die "run it with sudo"
     [[ -f "$STATE" ]] && load_state
-    warn "будут удалены: контейнер, настройки сети сервера от роутера, правила daemon.json"
-    [[ $PURGE -eq 1 ]] && warn "и ВСЕ настройки и данные роутера: $CONF_DIR, $DATA_DIR"
-    [[ $YES -eq 1 ]] || yesno "Удалить OutpostGate Pro?" n || exit 0
+    warn "to be removed: the container, the router's server network settings, the daemon.json rules"
+    [[ $PURGE -eq 1 ]] && warn "and ALL router settings and data: $CONF_DIR, $DATA_DIR"
+    [[ $YES -eq 1 ]] || yesno "Remove OutpostGate Pro?" n || exit 0
     if [[ $PURGE -eq 1 && $YES -eq 0 ]]; then
-        read -rp "  Для удаления данных введите purge: " REPLY
-        [[ "$REPLY" == purge ]] || die "отменено"
+        read -rp "  To delete the data, type purge: " REPLY
+        [[ "$REPLY" == purge ]] || die "cancelled"
     fi
     if [[ -f "$DEPLOY/.env" ]]; then "${COMPOSE[@]}" down 2>/dev/null || true; fi
     docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
@@ -724,15 +762,15 @@ do_uninstall() {
         if [[ -s "$CONF_DIR/daemon.json.orig" ]]; then cp -a "$CONF_DIR/daemon.json.orig" "$DAEMON_JSON"; else rm -f "$DAEMON_JSON"; fi
         rm -f "$CONF_DIR/daemon.json.orig"
         systemctl restart docker || true
-        ok "daemon.json возвращён как был"
+        ok "daemon.json restored"
     fi
     rm -f "$STATE" "$DEPLOY/.env"
     if [[ $PURGE -eq 1 ]]; then
         rm -rf "$CONF_DIR" "$DATA_DIR"
         docker image rm "$IMAGE" >/dev/null 2>&1 || true
-        ok "настройки и данные удалены"
+        ok "settings and data deleted"
     fi
-    ok "OutpostGate Pro удалён. Порты снова под управлением netplan/NetworkManager (перезагрузка сервера вернёт всё начисто)"
+    ok "OutpostGate Pro removed. The ports are back under netplan/NetworkManager (a server reboot gives a clean state)"
 }
 
 case "$ACTION" in

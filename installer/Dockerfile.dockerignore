@@ -1,0 +1,7 @@
+# only what the installer image needs (the main .dockerignore excludes deploy/)
+*
+!install.sh
+!deploy/host/docker-compose.yml
+!deploy/host/daemon.json.example
+!deploy/host/README.md
+!installer/entrypoint.sh

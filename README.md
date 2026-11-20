@@ -131,18 +131,51 @@ docker compose up --build
 Web UI: http://localhost:8001 · API docs: http://localhost:8001/docs · CLI: `ssh -p 2223 admin@localhost`
 
 ### Install on a VM or server
-Ubuntu 22.04/24.04 or Debian 12/13 with at least two network adapters:
+Ubuntu 22.04/24.04 or Debian 12/13 with Docker and at least two network adapters.
+
+**Option 1: installer container (no `git clone`).** One command; the ready router image is downloaded
+from GitHub Container Registry (amd64 and arm64):
 ```bash
+docker run --pull=always --rm -it --privileged --pid=host \
+  ghcr.io/fedor-afrin/outpost-gate-pro-installer:latest
+```
+The wizard asks for WAN, WAN2, LAN, admin password. The same command with an option manages the installation:
+```bash
+docker run --pull=always --rm -it --privileged --pid=host ghcr.io/fedor-afrin/outpost-gate-pro-installer:latest --update
+docker run --pull=always --rm -it --privileged --pid=host ghcr.io/fedor-afrin/outpost-gate-pro-installer:latest --status
+docker run --pull=always --rm -it --privileged --pid=host ghcr.io/fedor-afrin/outpost-gate-pro-installer:latest --uninstall
+```
+Unattended, for example from Ansible: add `-y --wan ens18 --wan-mode none --lan ens19 --password '...'`
+(all options: `--help`).
+
+What the options mean:
+
+| Part | Purpose |
+|---|---|
+| `--pull=always` | always use the latest installer |
+| `-it` | interactive mode for the wizard questions |
+| `--privileged --pid=host` | the installer works on the host itself: kernel modules, netplan / NetworkManager, Docker settings, the router container |
+
+The installer copies itself to `/opt/outpost-gate-pro` on the host and runs `install.sh` there.
+
+**Option 2: from a clone** (the image is built on the server):
+```bash
+git clone https://github.com/Fedor-Afrin/outpost-gate-pro.git
 cd outpost-gate-pro
 sudo ./install.sh                    # wizard: WAN, WAN2, LAN, admin password
 sudo ./install.sh --status
-sudo ./install.sh --update           # rebuild and restart after pulling new code
+sudo ./install.sh --update           # after git pull: rebuild and restart
 sudo ./install.sh --update --api-port 8080   # move the web UI to another port
 sudo ./install.sh --uninstall        # --purge also removes the settings
 ```
-Unattended: `sudo ./install.sh -y --wan ens18 --wan-mode none --lan ens19 --password '...'` (see `--help`).
-The installer loads kernel modules, sets sysctls, hands the router ports over from netplan /
-NetworkManager, keeps Docker out of the firewall and gives the server its own DNS.
+`sudo ./install.sh --image ghcr.io/fedor-afrin/outpost-gate-pro:latest` downloads the ready image instead of building it.
+
+Both options:
+- load the kernel modules and set the sysctls;
+- hand the router's ports over from netplan / NetworkManager (the port of your SSH session is not touched without asking);
+- keep Docker out of the firewall and clear a leftover `FORWARD DROP`;
+- give the server its own DNS;
+- write the first `router.yaml` and start the router with `network_mode: host`.
 
 ## Project layout
 ```
@@ -153,6 +186,7 @@ app/cli/        SSH command line: RouterOS syntax (commands.py), Linux syntax (l
 web/            web UI
 deploy/         run modes: host, gns3, monitoring stack
 install.sh      installer for VMs and servers
+installer/      installer container image (runs install.sh on the host)
 tests/          pytest
 ```
 
