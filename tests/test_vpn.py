@@ -1,6 +1,6 @@
 """
 Тесты VPN → WireGuard без ядра и без утилиты wg: всё системное подменяется.
-WAN = eth1 (шлюз 172.18.0.1), LAN включён на br-lan 192.168.88.1/24.
+WAN = eth1 (шлюз 172.18.0.1), LAN включён на br-lan 192.168.1.1/24.
 """
 import pytest
 import yaml
@@ -58,7 +58,7 @@ def env(tmp_path, monkeypatch):
     cfg = tmp_path / "router.yaml"
     cfg.write_text(yaml.safe_dump({
         "wan": {"interface": "eth1", "mode": "none"},
-        "lan": {"enabled": True, "address": "192.168.88.1/24"},
+        "lan": {"enabled": True, "address": "192.168.1.1/24"},
     }))
     store = ConfigStore(str(cfg), str(tmp_path / "data"))
     (tmp_path / "data").mkdir()
@@ -154,7 +154,7 @@ def test_disable_cleans_up(env):
 
 def test_lan_overlap_rejected_and_rolled_back(env):
     store, kernel, *_ = env
-    bad = parse_wg_quick(CONF.replace("0.0.0.0/0, ::/0", "192.168.88.0/24"))
+    bad = parse_wg_quick(CONF.replace("0.0.0.0/0, ::/0", "192.168.1.0/24"))
     with pytest.raises(vpn.VpnError, match="пересекается"):
         vpn.update("wireguard", bad.model_copy(update={"enabled": True}))
     assert "wg0" not in kernel.links

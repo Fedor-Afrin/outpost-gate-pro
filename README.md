@@ -69,13 +69,13 @@ backups and snapshots, Safe Mode, RouterOS-style `/export`, time zone, an instal
 
 ## Command line: RouterOS or Linux — your choice
 
-SSH into the router (`ssh -p 2222 admin@192.168.88.1`). On the first login it asks which syntax you
+SSH into the router (`ssh -p 2222 admin@192.168.1.1`). On the first login it asks which syntax you
 prefer; switch any time with `linux` / `routeros`.
 
 **MikroTik RouterOS style** — menus, abbreviations, `print detail`, row numbers, Tab completion:
 ```
 [admin@office] > /ip address print
-[admin@office] > /ip firewall nat add chain=dstnat action=dst-nat protocol=tcp dst-port=8080 to-addresses=192.168.88.20 to-ports=80
+[admin@office] > /ip firewall nat add chain=dstnat action=dst-nat protocol=tcp dst-port=8080 to-addresses=192.168.1.20 to-ports=80
 [admin@office] > /interface gre add remote-address=10.8.1.3 address=172.16.0.1/30 underlay=awg0 ospf=yes
 [admin@office] > /routing ospf neighbor print
 [admin@office] > :resolve samba

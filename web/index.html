@@ -351,7 +351,7 @@
         <h2 id="lan-form-title">Настройки</h2>
         <label class="check"><input type="checkbox" name="enabled"> Включить сегмент (мост, DHCP, DNS, NAT)</label>
         <label class="row">Имя сегмента <input name="name" maxlength="32" required></label>
-        <label class="row">IP-адрес роутера / маска <input name="address" placeholder="192.168.88.1/24" required></label>
+        <label class="row">IP-адрес роутера / маска <input name="address" placeholder="192.168.1.1/24" required></label>
 
         <div class="row-block">
           <span>Порты</span>
@@ -410,8 +410,8 @@
       <form id="dhcp-form" class="card form wide">
         <h2>Раздача адресов</h2>
         <label class="check"><input type="checkbox" name="dhcp_enabled"> Раздавать адреса в этом сегменте</label>
-        <label class="row">Начало диапазона <input name="pool_start" placeholder="192.168.88.10"></label>
-        <label class="row">Конец диапазона <input name="pool_end" placeholder="192.168.88.254"></label>
+        <label class="row">Начало диапазона <input name="pool_start" placeholder="192.168.1.10"></label>
+        <label class="row">Конец диапазона <input name="pool_end" placeholder="192.168.1.254"></label>
         <label class="row">Срок аренды
           <select name="lease_time">
             <option value="10m">10 минут</option><option value="1h">1 час</option><option value="12h">12 часов</option>
@@ -423,21 +423,21 @@
         <h2>Основные опции</h2>
         <label class="row wide-row">DNS-серверы (6) <input name="dns_servers" placeholder="пусто — роутер"></label>
         <label class="row wide-row">Суффиксы поиска (119) <input name="domain_search" placeholder="пусто — домен сегмента"></label>
-        <label class="row wide-row">NTP-серверы (42) <input name="ntp_servers" placeholder="192.168.88.1"></label>
+        <label class="row wide-row">NTP-серверы (42) <input name="ntp_servers" placeholder="192.168.1.1"></label>
         <label class="row">Смещение времени, с (2) <input name="time_offset" type="number" placeholder="7200"></label>
         <label class="row">MTU (26) <input name="mtu" type="number" min="576" max="9000" placeholder="1500"></label>
         <label class="row wide-row">WINS-серверы (44) <input name="wins_servers"></label>
 
         <h2>IP-телефоны и загрузка по сети</h2>
-        <label class="row wide-row">TFTP-сервер (66) <input name="tftp_server" placeholder="192.168.88.5 или http://pbx/prov"></label>
+        <label class="row wide-row">TFTP-сервер (66) <input name="tftp_server" placeholder="192.168.1.5 или http://pbx/prov"></label>
         <label class="row wide-row">Файл загрузки (67) <input name="boot_file" placeholder="pxelinux.0"></label>
-        <label class="row wide-row">TFTP-серверы Cisco (150) <input name="tftp_servers_150" placeholder="192.168.88.5"></label>
-        <label class="row wide-row">SIP-серверы (120) <input name="sip_servers" placeholder="192.168.88.5"></label>
+        <label class="row wide-row">TFTP-серверы Cisco (150) <input name="tftp_servers_150" placeholder="192.168.1.5"></label>
+        <label class="row wide-row">SIP-серверы (120) <input name="sip_servers" placeholder="192.168.1.5"></label>
         <label class="row wide-row">URL автонастройки (160) <input name="provisioning_url" placeholder="http://pbx.office.lan/prov"></label>
         <p class="hint">Grandstream, Yealink и Fanvil берут сервер автонастройки из опции 66 (можно URL), Cisco — из 150, Polycom — из 160.</p>
 
         <h2>Маршруты и прочее</h2>
-        <label class="row wide-row">Статические маршруты (121/249) <input name="static_routes" placeholder="10.0.0.0/8 via 192.168.88.254"></label>
+        <label class="row wide-row">Статические маршруты (121/249) <input name="static_routes" placeholder="10.0.0.0/8 via 192.168.1.254"></label>
         <label class="row wide-row">Автонастройка прокси, WPAD (252) <input name="wpad_url" placeholder="http://proxy/wpad.dat"></label>
         <label class="row wide-row">Vendor-specific (43), hex <input name="vendor_43" placeholder="01:04:c0:a8:58:05"></label>
         <p class="hint">Списки — через запятую. Маршруты получают клиенты, которым не хватает маршрута по умолчанию (например, в сеть центра через другой роутер).</p>
@@ -462,7 +462,7 @@
           Быстрее всего — кнопкой «Закрепить» в списке устройств.</p>
         <form id="static-form" class="toolbar">
           <input name="mac" placeholder="MAC: 00:0b:82:aa:bb:cc" required>
-          <input name="ip" placeholder="IP: 192.168.88.20" required>
+          <input name="ip" placeholder="IP: 192.168.1.20" required>
           <input name="name" placeholder="Имя: Телефон бухгалтера">
           <button type="submit">+ Закрепить</button>
           <span id="static-error" class="error"></span>
@@ -516,7 +516,7 @@
         <div class="tabs" id="zone-tabs"></div>
         <form id="zone-form" class="form">
           <label class="row">Имя зоны <input name="zone_name" placeholder="office.lan"></label>
-          <label class="row" id="zone-rev-label">или обратная зона для сети <input name="reverse_net" placeholder="192.168.88.0/24"></label>
+          <label class="row" id="zone-rev-label">или обратная зона для сети <input name="reverse_net" placeholder="192.168.1.0/24"></label>
           <label class="row">TTL по умолчанию, с <input name="zone_ttl" type="number" min="60" max="604800"></label>
           <label class="check"><input type="checkbox" name="dhcp_names"> Добавлять имена устройств из DHCP</label>
           <label class="check"><input type="checkbox" name="auto_ptr"> Обратная зона: PTR для A-записей автоматически</label>
@@ -534,7 +534,7 @@
             <div class="rec-form">
               <label>Имя <input name="rec_name" size="14" placeholder="nas"></label>
               <label>Тип <select name="rec_type"></select></label>
-              <label>Значение <input name="rec_value" size="22" placeholder="192.168.88.20"></label>
+              <label>Значение <input name="rec_value" size="22" placeholder="192.168.1.20"></label>
               <label data-rec="priority">Приоритет <input name="rec_priority" type="number" min="0" class="narrow"></label>
               <label data-rec="weight">Вес <input name="rec_weight" type="number" min="0" class="narrow"></label>
               <label data-rec="port">Порт <input name="rec_port" type="number" min="0" max="65535" class="narrow"></label>
@@ -996,7 +996,7 @@
                 <option value="vpn">VPN-туннель (телефон через тот же сервер)</option>
                 <option value="any">WAN и VPN</option></select></label>
             <label>Порт на роутере <input name="wan_port" placeholder="8080 или 5060-5070" required></label>
-            <label>IP устройства в LAN <input name="to_ip" placeholder="192.168.88.20" required></label>
+            <label>IP устройства в LAN <input name="to_ip" placeholder="192.168.1.20" required></label>
             <label>Порт устройства <input name="to_port" type="number" min="1" max="65535" placeholder="тот же"></label>
             <label>Разрешённые источники CIDR <input name="src" placeholder="все (0.0.0.0/0)"></label>
           </div>
@@ -1116,7 +1116,7 @@
         <label class="check"><input type="checkbox" name="enabled"> Включить BGP</label>
         <label class="row">Номер AS роутера <input name="asn" type="number" min="1" max="4294967295" placeholder="65001"></label>
         <label class="row">Router ID (общий для OSPF и BGP) <input name="router_id" placeholder="10.255.0.1"></label>
-        <label class="row wide-row">Объявлять сети <input name="networks" placeholder="192.168.88.0/24, 10.20.0.0/16"></label>
+        <label class="row wide-row">Объявлять сети <input name="networks" placeholder="192.168.1.0/24, 10.20.0.0/16"></label>
         <p class="hint">Сеть объявляется, только если она есть в таблице маршрутизации роутера (например, сеть LAN).</p>
         <div class="row-block"><span>Передавать в BGP (redistribute)</span>
           <div class="port-list">
@@ -1228,7 +1228,7 @@
           <label data-f="count">Количество <input name="count" type="number" min="1" max="100" value="4"></label>
           <label data-f="ports">Порты <input name="ports" placeholder="22, 80, 443 или 1-1024" value="22, 80, 443, 8000, 8291"></label>
           <label data-f="max_hops">Макс. хопов <input name="max_hops" type="number" min="1" max="64" value="30"></label>
-          <label data-f="network">Сеть <input name="network" placeholder="192.168.88.0/24"></label>
+          <label data-f="network">Сеть <input name="network" placeholder="192.168.1.0/24"></label>
           <label data-f="interface">Интерфейс <select name="interface"></select></label>
         </div>
         <div class="toolbar">

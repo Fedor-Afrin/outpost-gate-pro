@@ -100,7 +100,7 @@ def get_segment(seg_id: str, data: dict | None = None) -> LanConfig:
 
 
 def renumber(ip: str, old_net, new_net, router_ip) -> str | None:
-    """Тот же номер хоста в новой сети: 192.168.88.20 (/24) -> 192.168.1.20. None — не помещается."""
+    """Тот же номер хоста в новой сети: 192.168.1.20 (/24) -> 192.168.5.20. None — не помещается."""
     try:
         offset = int(ipaddress.ip_address(ip)) - int(old_net.network_address)
     except ValueError:

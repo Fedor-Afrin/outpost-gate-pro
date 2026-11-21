@@ -69,7 +69,7 @@ def test_ip_changes_go_to_config(lx):
         linux.execute(cx, "ip route del default")
     linux.execute(cx, "ip addr add 10.10.0.1/24 dev br-lan")
     assert puts(cx, "POST")[-1][2] == {"address": "10.10.0.1/24", "interface": "br-lan", "comment": "ip addr add"}
-    linux.execute(cx, "ip addr del 192.168.88.1/24 dev br-lan")
+    linux.execute(cx, "ip addr del 192.168.1.1/24 dev br-lan")
     assert puts(cx, "DELETE")[-1] == ("DELETE", "/api/ip/addresses/1", None)
     with pytest.raises(c.CliError, match="comes from a segment"):
         linux.execute(cx, "ip addr del 172.18.0.2/16 dev eth0")
@@ -162,7 +162,7 @@ def test_syntax_switch_and_one_shot(lx, monkeypatch):
 def test_without_paging_ignored(lx):
     cx, out, _ = lx
     c.execute(cx, "/ip address print without-paging", [])
-    assert any("192.168.88.1/24" in l for l in out)
+    assert any("192.168.1.1/24" in l for l in out)
 
 
 def test_cli_prefs(tmp_path, monkeypatch):

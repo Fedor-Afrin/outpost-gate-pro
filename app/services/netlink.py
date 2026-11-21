@@ -123,7 +123,7 @@ def link_set_master(port: str, bridge: str | None) -> None:
 
 
 def kernel_ipv4_addresses() -> list[tuple[str, str]]:
-    """[(ifname, '192.168.88.1/24'), ...] — IPv4-адреса, реально назначенные в ядре."""
+    """[(ifname, '192.168.1.1/24'), ...] — IPv4-адреса, реально назначенные в ядре."""
     with _ipr() as ipr:
         names = {l["index"]: l.get_attr("IFLA_IFNAME") for l in ipr.get_links()}
         out = []

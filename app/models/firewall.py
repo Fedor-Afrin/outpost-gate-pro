@@ -53,7 +53,7 @@ def normalize_cidr(v: str | None, what: str) -> str | None:
     try:
         net = ipaddress.ip_network(v.strip(), strict=False)
     except ValueError as e:
-        raise ValueError(f"{what}: неверная сеть '{v}' (пример: 203.0.113.0/24 или 192.168.88.20)") from e
+        raise ValueError(f"{what}: неверная сеть '{v}' (пример: 203.0.113.0/24 или 192.168.1.20)") from e
     if net.version != 4:
         raise ValueError(f"{what}: нужен IPv4")
     return str(net)
@@ -66,7 +66,7 @@ class FirewallRule(BaseModel):
     in_zone: Zone = Field("any", description="Откуда пришёл пакет")
     out_zone: Zone = Field("any", description="Куда уходит (только для транзита)")
     src: str | None = Field(None, description="Источник CIDR; пусто = 0.0.0.0/0", examples=["203.0.113.0/24"])
-    dst: str | None = Field(None, description="Назначение CIDR (только для транзита)", examples=["192.168.88.20"])
+    dst: str | None = Field(None, description="Назначение CIDR (только для транзита)", examples=["192.168.1.20"])
     protocol: Literal["all", "tcp", "udp", "icmp"] = "all"
     src_ports: str | None = Field(None, examples=["1024-65535"])
     dst_ports: str | None = Field(None, examples=["22", "80, 443"])
@@ -113,7 +113,7 @@ class PortForward(BaseModel):
     enabled: bool = True
     protocol: Literal["tcp", "udp", "tcp+udp"] = "tcp"
     wan_port: str = Field(examples=["8080", "5060-5070"])
-    to_ip: str = Field(examples=["192.168.88.20"])
+    to_ip: str = Field(examples=["192.168.1.20"])
     to_port: int | None = Field(None, ge=1, le=65535, description="Пусто = тот же порт")
     src: str | None = Field(None, description="Разрешённые источники; пусто = все")
     from_zone: Literal["wan", "vpn", "any"] = Field(

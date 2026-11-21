@@ -85,7 +85,7 @@ def test_model_validation():
 # --- фаервол с двумя WAN -----------------------------------------------------------------------
 def test_firewall_two_wans():
     from app.models.firewall import PortForward
-    fwd = [(1, PortForward(protocol="tcp", wan_port="8080", to_ip="192.168.88.20", to_port=80))]
+    fwd = [(1, PortForward(protocol="tcp", wan_port="8080", to_ip="192.168.1.20", to_port=80))]
     rs = firewall.ruleset(["eth0", "eth2"], "br-lan", False, forwards=fwd)
     assert 'iifname != { "eth0", "eth2" } accept' in rs
     assert 'iifname "br-lan" oifname { "eth0", "eth2" } accept' in rs
@@ -211,10 +211,10 @@ def test_hook_wan2_dhcp(env, monkeypatch):
 def test_ntp_conf_and_parsers(tmp_path):
     c = NtpConfig(enabled=True, servers=["pool.ntp.org", "TIME.google.com", "162.159.200.1"], orphan=True)
     assert c.servers == ["pool.ntp.org", "time.google.com", "162.159.200.1"]
-    t = ntp.chrony_conf(c, ["192.168.88.0/24", "10.30.0.0/24"], tmp_path / "drift")
+    t = ntp.chrony_conf(c, ["192.168.1.0/24", "10.30.0.0/24"], tmp_path / "drift")
     assert "pool pool.ntp.org iburst" in t and "server time.google.com iburst" in t and "server 162.159.200.1 iburst" in t
-    assert "allow 192.168.88.0/24" in t and "allow 10.30.0.0/24" in t and "local stratum 10 orphan" in t
-    t = ntp.chrony_conf(NtpConfig(enabled=True, serve_lan=False), ["192.168.88.0/24"], tmp_path / "drift")
+    assert "allow 192.168.1.0/24" in t and "allow 10.30.0.0/24" in t and "local stratum 10 orphan" in t
+    t = ntp.chrony_conf(NtpConfig(enabled=True, serve_lan=False), ["192.168.1.0/24"], tmp_path / "drift")
     assert "allow" not in t.replace("cmdallow", "")
     with pytest.raises(ValidationError):
         NtpConfig(servers=["bad host!"])
@@ -226,11 +226,11 @@ def test_ntp_conf_and_parsers(tmp_path):
 
 
 def test_dhcp_option_42_points_to_router():
-    seg = LanConfig(enabled=True, address="192.168.88.1/24")
+    seg = LanConfig(enabled=True, address="192.168.1.1/24")
     opts = dhcp.option_data(seg, [], ntp_router=True)
-    assert {"name": "ntp-servers", "data": "192.168.88.1"} in opts
+    assert {"name": "ntp-servers", "data": "192.168.1.1"} in opts
     assert not any(o.get("name") == "ntp-servers" for o in dhcp.option_data(seg, []))
-    own = LanConfig(enabled=True, address="192.168.88.1/24", dhcp_options={"ntp_servers": ["10.0.0.1"]})
+    own = LanConfig(enabled=True, address="192.168.1.1/24", dhcp_options={"ntp_servers": ["10.0.0.1"]})
     assert {"name": "ntp-servers", "data": "10.0.0.1"} in dhcp.option_data(own, [], ntp_router=True)
 
 
@@ -246,7 +246,7 @@ def test_wol(monkeypatch):
 
     from app.models.lan import Lease
     from app.services import lan
-    s1 = LanConfig(id="lan1", name="LAN", enabled=True, address="192.168.88.1/24")
+    s1 = LanConfig(id="lan1", name="LAN", enabled=True, address="192.168.1.1/24")
     s2 = LanConfig(id="lan2", name="Phones", enabled=True, address="10.30.0.1/24")
     monkeypatch.setattr(lan, "segments", lambda data=None: [s1, s2])
     monkeypatch.setattr(lan, "leases", lambda: [Lease(ip="10.30.0.5", mac="3c:52:82:aa:bb:cc", lan="lan2")])

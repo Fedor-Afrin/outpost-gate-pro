@@ -5,7 +5,7 @@
 JSON: {"identity": "office", "timezone": "Asia/Jerusalem",
        "wan":  {"interface": "eth0", "mode": "none|dhcp|static", "address": ..., "gateway": ..., "dns": [...]},
        "wan2": {...} или null,
-       "lan":  {"address": "192.168.88.1/24", "ports": ["eth1", "eth2"], "wan_management": true}}
+       "lan":  {"address": "192.168.1.1/24", "ports": ["eth1", "eth2"], "wan_management": true}}
 Конфиг собирается теми же моделями, что и API, и проверяется целиком — ошибка — код 2 и текст в stderr.
 """
 from __future__ import annotations
@@ -28,7 +28,7 @@ def build(p: dict) -> dict:
         data["multiwan"] = {"mode": p.get("multiwan_mode") or "failover", "primary": "wan1"}
     lan_p = p.get("lan") or {}
     lan = LanConfig(id="lan1", name="LAN", enabled=bool(lan_p.get("ports") or lan_p.get("auto")),
-                    address=lan_p.get("address") or "192.168.88.1/24", ports=lan_p.get("ports") or [],
+                    address=lan_p.get("address") or "192.168.1.1/24", ports=lan_p.get("ports") or [],
                     wan_management=bool(lan_p.get("wan_management", True)))
     lan_yaml, fw = lan.to_yaml()
     data["lan"] = lan_yaml

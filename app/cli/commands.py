@@ -4,7 +4,7 @@
   [admin@office] > /ip address print
   [admin@office] > /ip addr pr detail                 # сокращения, как в RouterOS
   [admin@office] > /ip address
-  [admin@office] /ip address> add address=192.168.88.1/24 interface=eth1
+  [admin@office] /ip address> add address=192.168.1.1/24 interface=eth1
   [admin@office] /ip address> set 0 comment="LAN"
   [admin@office] /ip address> ..
   [admin@office] /ip> /ping 8.8.8.8 count=3
@@ -1105,7 +1105,7 @@ def resolve_cmd(ctx, pos, named):
 
 
 def ip_scan(ctx, pos, named):
-    """/tool ip-scan address-range=192.168.88.0/24 interface=br-lan — как в RouterOS (ping + ARP)."""
+    """/tool ip-scan address-range=192.168.1.0/24 interface=br-lan — как в RouterOS (ping + ARP)."""
     from app.services import tools
     params = {"network": named.get("address-range") or (pos[0] if pos else None), "interface": named.get("interface")}
 
@@ -2054,7 +2054,7 @@ ROOT = Menu("OutpostGate Pro", {
         }),
         "route": Menu("маршруты", {
             "print": pr(route_print),
-            "add": Cmd(route_add, "добавить: add dst-address=10.0.0.0/8 gateway=192.168.88.254",
+            "add": Cmd(route_add, "добавить: add dst-address=10.0.0.0/8 gateway=192.168.1.254",
                        ("dst-address", "gateway", "distance", "comment", "disabled"), {"disabled": YESNO}),
             **_crud("/api/ip/routes", "/ip route", {"dst-address": "dst_address", "gateway": "gateway",
                                                      "distance": "distance", "comment": "comment"}),
@@ -2122,7 +2122,7 @@ ROOT = Menu("OutpostGate Pro", {
                        {"forward-only": YESNO, "dnssec": YESNO}),
             "static": Menu("записи зон", {
                 "print": pr(dns_static_print),
-                "add": Cmd(dns_static_add, "add name=pbx.office.lan address=192.168.88.5 | type=CNAME cname=pbx",
+                "add": Cmd(dns_static_add, "add name=pbx.office.lan address=192.168.1.5 | type=CNAME cname=pbx",
                            ("name", "type", "address", "cname", "text", "value", "mx-exchange", "mx-preference",
                             "srv-target", "srv-priority", "srv-weight", "srv-port", "ns", "ttl", "comment"),
                            {"type": DNS_TYPES}),
@@ -2144,7 +2144,7 @@ ROOT = Menu("OutpostGate Pro", {
             "nat": Menu("проброс портов", {
                 "print": pr(nat_print),
                 "add": Cmd(nat_add, "add chain=dstnat action=dst-nat protocol=tcp dst-port=8080 "
-                                    "to-addresses=192.168.88.20 to-ports=80", NAT_FIELDS,
+                                    "to-addresses=192.168.1.20 to-ports=80", NAT_FIELDS,
                            {"chain": ["dstnat"], "action": ["dst-nat"], "protocol": ["tcp", "udp", "tcp,udp"],
                             "in-interface-list": ["WAN", "VPN", "WAN,VPN"], "disabled": YESNO}),
                 "set": Cmd(nat_set, "изменить: set 0 параметр=значение", ("numbers",) + NAT_FIELDS),
@@ -2177,7 +2177,7 @@ ROOT = Menu("OutpostGate Pro", {
             }),
             "network": Menu("сети OSPF", {
                 "print": pr(ospf_network_print),
-                "add": Cmd(ospf_network_add, "add network=192.168.88.0/24 area=backbone", ("network", "area"),
+                "add": Cmd(ospf_network_add, "add network=192.168.1.0/24 area=backbone", ("network", "area"),
                            {"area": ["backbone"]}),
                 "remove": Cmd(ospf_network_remove, "удалить: remove 0", ("numbers",)),
             }),
@@ -2201,7 +2201,7 @@ ROOT = Menu("OutpostGate Pro", {
             }),
             "network": Menu("объявляемые сети", {
                 "print": pr(bgp_network_print),
-                "add": Cmd(bgp_network_add, "add network=192.168.88.0/24", ("network",)),
+                "add": Cmd(bgp_network_add, "add network=192.168.1.0/24", ("network",)),
                 "remove": Cmd(bgp_network_remove, "удалить: remove 0", ("numbers",)),
             }),
             "peer": Menu("соседи BGP", {
@@ -2267,7 +2267,7 @@ ROOT = Menu("OutpostGate Pro", {
     "tool": Menu("инструменты", {
         "ping": Cmd(ping, "ping 8.8.8.8 count=4 interface=wg0", ("address", "count", "interface"), IFACE),
         "traceroute": Cmd(traceroute, "traceroute 8.8.8.8", ("address", "max-hops", "interface"), IFACE),
-        "ip-scan": Cmd(ip_scan, "устройства в сети: ip-scan address-range=192.168.88.0/24",
+        "ip-scan": Cmd(ip_scan, "устройства в сети: ip-scan address-range=192.168.1.0/24",
                        ("address-range", "interface"), IFACE),
         "dns-lookup": Cmd(dns_lookup, "dns-lookup name=example.com", ("name",)),
         "torch": Cmd(torch, "кто качает: torch segment=LAN count=20", ("segment", "count")),
@@ -2287,7 +2287,7 @@ ROOT = Menu("OutpostGate Pro", {
         }),
         "simple": Menu("лимиты устройств", {
             "print": Cmd(queue_simple_print, P),
-            "add": Cmd(queue_simple_add, "add name=laptop target=192.168.88.20 max-limit=2M/10M",
+            "add": Cmd(queue_simple_add, "add name=laptop target=192.168.1.20 max-limit=2M/10M",
                        ("name", "target", "max-limit", "disabled"), {"disabled": YESNO}),
             "set": Cmd(_queue_edit(_qs_set), "set 0 max-limit=5M/20M", ("numbers", "name", "target", "max-limit", "disabled"),
                        {"disabled": YESNO}),

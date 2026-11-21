@@ -106,20 +106,20 @@ def test_qos_plan():
     cfg = QosConfig(enabled=True, wan_down=100, wan_up=20,
                     segments=[{"lan": "lan2", "down": 20, "up": 5}],
                     devices=[{"ip": "10.20.0.50", "name": "phone", "down": 2}, {"ip": "10.20.0.60", "up": 1},
-                             {"ip": "192.168.88.20", "down": 50}])
+                             {"ip": "192.168.1.20", "down": 50}])
     cmds = qos.plan_segment(cfg, "br-lan2", "10.20.0.0/24", "lan2")
     text = [" ".join(c) for c in cmds]
     assert "class add dev br-lan2 parent 1: classid 1:1 htb rate 20000kbit ceil 20000kbit" in text
     assert "filter add dev br-lan2 parent 1: protocol ip prio 1 u32 match ip tos 0xb8 0xfc flowid 1:10" in text
     assert "class add dev br-lan2 parent 1:1 classid 1:100 htb rate 2000kbit ceil 2000kbit prio 1" in text
     assert "filter add dev br-lan2 parent 1: protocol ip prio 2 u32 match ip dst 10.20.0.50/32 flowid 1:100" in text
-    assert not any("192.168.88.20" in t for t in text)                     # устройство другого сегмента
+    assert not any("192.168.1.20" in t for t in text)                     # устройство другого сегмента
     assert any("match ip src 10.20.0.60/32 police rate 1000kbit" in t for t in text)
     assert any("prio 5 u32 match ip src 10.20.0.0/24 police rate 5000kbit" in t for t in text)
     # без лимитов сегмента: потолок — скорость провайдера
-    assert "rate 100000kbit" in " ".join(qos.plan_segment(cfg, "br-lan", "192.168.88.0/24", "lan1")[1])
+    assert "rate 100000kbit" in " ".join(qos.plan_segment(cfg, "br-lan", "192.168.1.0/24", "lan1")[1])
     # без голоса и без лимитов — ничего
-    assert qos.plan_segment(QosConfig(enabled=True, voice=False), "br-lan", "192.168.88.0/24", "lan1") == []
+    assert qos.plan_segment(QosConfig(enabled=True, voice=False), "br-lan", "192.168.1.0/24", "lan1") == []
     w = [" ".join(c) for c in qos.plan_wan(cfg, "eth0")]
     assert "class add dev eth0 parent 1: classid 1:1 htb rate 20000kbit ceil 20000kbit" in w and any("1:10" in x for x in w)
     assert qos.plan_wan(QosConfig(enabled=True), "eth0") == []
@@ -141,14 +141,14 @@ def test_qos_apply_and_firewall(tmp_path, monkeypatch):
     class R:
         returncode, stdout, stderr = 0, "[]", ""
     monkeypatch.setattr(qos, "tc", lambda *a: calls.append(a) or R())
-    monkeypatch.setattr(qos, "_segments", lambda: [LanConfig(enabled=True, address="192.168.88.1/24")])
+    monkeypatch.setattr(qos, "_segments", lambda: [LanConfig(enabled=True, address="192.168.1.1/24")])
     monkeypatch.setattr(qos, "_wans", lambda: ["eth0"])
     monkeypatch.setattr(firewall, "refresh", lambda *a: None)
-    st = qos.update(QosConfig(enabled=True, wan_up=20, devices=[{"ip": "192.168.88.20", "name": "laptop", "down": 10}]))
+    st = qos.update(QosConfig(enabled=True, wan_up=20, devices=[{"ip": "192.168.1.20", "name": "laptop", "down": 10}]))
     assert st.active and ("qdisc", "del", "dev", "br-lan", "root") in calls
-    assert any(c[:2] == ("filter", "add") and "192.168.88.20/32" in c for c in calls)
+    assert any(c[:2] == ("filter", "add") and "192.168.1.20/32" in c for c in calls)
     assert qos.firewall_ports() == ("5060-5061", "10000-20000")
-    assert qos.set_device_enabled("192.168.88.20", False) == "ограничение 192.168.88.20: выключено"
+    assert qos.set_device_enabled("192.168.1.20", False) == "ограничение 192.168.1.20: выключено"
     assert qos.get_config().devices[0].enabled is False
     rs = firewall.ruleset("eth0", "br-lan", False, qos=("5060-5061", "10000-20000"))
     assert "udp dport { 5060-5061, 10000-20000 } ip dscp set ef" in rs and "hook forward priority mangle" in rs
@@ -163,18 +163,18 @@ def test_qos_apply_and_firewall(tmp_path, monkeypatch):
 CONFIG = {
     "system": {"identity": "office"},
     "wan": {"interface": "eth0", "mode": "static", "address": "203.0.113.10/24", "gateway": "203.0.113.1", "dns": ["1.1.1.1"]},
-    "lan": {"enabled": True, "address": "192.168.88.1/24", "dhcp-server": {"static-leases": [
-        {"mac": "00:0b:82:aa:bb:cc", "ip": "192.168.88.5", "name": "Телефон директора"}]}},
+    "lan": {"enabled": True, "address": "192.168.1.1/24", "dhcp-server": {"static-leases": [
+        {"mac": "00:0b:82:aa:bb:cc", "ip": "192.168.1.5", "name": "Телефон директора"}]}},
     "lans": [{"id": "lan2", "name": "Guests", "enabled": True, "address": "10.20.0.1/24", "ports": ["eth3"]}],
     "firewall": {"rules": [{"id": 1, "chain": "input", "action": "accept", "in-zone": "wan", "protocol": "tcp",
                             "dst-ports": "22", "description": "SSH"}],
-                 "forwards": [{"id": 1, "protocol": "tcp", "wan-port": "8080", "to-ip": "192.168.88.20", "to-port": 80}]},
+                 "forwards": [{"id": 1, "protocol": "tcp", "wan-port": "8080", "to-ip": "192.168.1.20", "to-port": 80}]},
     "vpn": {"wireguard": {"enabled": True, "private-key": "cHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHA=",
                           "address": ["10.8.0.2/32"],
                           "peer": {"public-key": "a2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2s=",
                                    "endpoint": "vpn.example.com:51820", "allowed-ips": ["0.0.0.0/0"]}}},
     "qos": {"enabled": True, "wan_down": 200, "wan_up": 50, "segments": [{"lan": "lan2", "down": 20, "up": 5}],
-            "devices": [{"ip": "192.168.88.20", "name": "laptop", "down": 10, "up": 2}]},
+            "devices": [{"ip": "192.168.1.20", "name": "laptop", "down": 10, "up": 2}]},
     "scheduler": {"tasks": [{"id": 1, "name": "Разбудить ПК", "schedule": {"kind": "weekly", "time": "08:00", "days": [0, 4]},
                              "action": {"type": "wol", "mac": "3c:52:82:aa:bb:cc"}}]},
     "ntp": {"enabled": True, "servers": ["pool.ntp.org"], "timezone": "Asia/Jerusalem"},
@@ -190,14 +190,14 @@ def test_export_text():
         "/system identity", "set name=office",
         "set time-zone-name=Asia/Jerusalem",
         "set interface=eth0 mode=static address=203.0.113.10/24 gateway=203.0.113.1 dns=1.1.1.1",
-        "set [ find id=lan1 ] name=LAN address=192.168.88.1/24 ports=auto dns=yes domain=office.lan wan-management=yes disabled=no",
+        "set [ find id=lan1 ] name=LAN address=192.168.1.1/24 ports=auto dns=yes domain=office.lan wan-management=yes disabled=no",
         "add id=lan2 name=Guests address=10.20.0.1/24 ports=eth3 dns=yes wan-management=yes disabled=no",
-        'add server=LAN mac-address=00:0b:82:aa:bb:cc address=192.168.88.5 comment="Телефон директора"',
+        'add server=LAN mac-address=00:0b:82:aa:bb:cc address=192.168.1.5 comment="Телефон директора"',
         "add chain=input action=accept protocol=tcp dst-port=22 in-interface-list=WAN comment=SSH",
-        "add chain=dstnat action=dst-nat protocol=tcp dst-port=8080 to-addresses=192.168.88.20 to-ports=80",
+        "add chain=dstnat action=dst-nat protocol=tcp dst-port=8080 to-addresses=192.168.1.20 to-ports=80",
         "set enabled=yes wan-limit=50M/200M voice-priority=yes sip-ports=5060-5061 rtp-ports=10000-20000",
         "set [ find lan=Guests ] max-limit=5M/20M",
-        "add name=laptop target=192.168.88.20 max-limit=2M/10M",
+        "add name=laptop target=192.168.1.20 max-limit=2M/10M",
         'add name="Разбудить ПК" start-time=08:00 days=mon,fri on-event=wol mac=3c:52:82:aa:bb:cc',
         "add name=ivan group=read",
     ]:

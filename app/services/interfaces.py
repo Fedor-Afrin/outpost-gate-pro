@@ -9,7 +9,7 @@ IFF_RUNNING = 0x40  # флаг "линк есть"
 def _collect() -> list[Interface]:
     result: list[Interface] = []
     with IPRoute() as ipr:
-        # адреса: index -> ["192.168.88.1/24", ...]
+        # адреса: index -> ["192.168.1.1/24", ...]
         addrs: dict[int, list[str]] = {}
         for a in ipr.get_addr():
             ip = a.get_attr("IFA_ADDRESS")

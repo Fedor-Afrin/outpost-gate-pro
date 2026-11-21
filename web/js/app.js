@@ -1591,7 +1591,7 @@ const OSPF_TYPES = ["auto", "point-to-point", "broadcast", "non-broadcast"];
 const SECRET = "********";    // так сервер показывает заданный пароль; оставить = не менять
 
 function ospfNetRow(n = {}) {
-  return `<tr data-row="ospf-net"><td>${inp("network", n.network, 'placeholder="192.168.88.0/24" size="18"')}</td>
+  return `<tr data-row="ospf-net"><td>${inp("network", n.network, 'placeholder="192.168.1.0/24" size="18"')}</td>
     <td>${inp("area", n.area ?? "0.0.0.0", 'size="10"')}</td>
     <td><button type="button" class="danger" data-del-row>×</button></td></tr>`;
 }
@@ -1621,7 +1621,7 @@ function bgpNbBlock(n = {}) {
       <label>Keepalive, с ${inp("keepalive", n.keepalive ?? 60, 'type="number" min="1"')}</label>
       <label>Hold, с ${inp("hold", n.hold ?? 180, 'type="number" min="3"')}</label>
       <label class="wide">Принимать только ${inp("prefix_in", (n.prefix_in || []).join(", "), 'placeholder="10.0.0.0/8 le 24"')}</label>
-      <label class="wide">Отдавать только ${inp("prefix_out", (n.prefix_out || []).join(", "), 'placeholder="192.168.88.0/24"')}</label>
+      <label class="wide">Отдавать только ${inp("prefix_out", (n.prefix_out || []).join(", "), 'placeholder="192.168.1.0/24"')}</label>
     </div>
     <div class="toolbar">
       <label class="check"><input type="checkbox" name="nb_enabled" ${n.enabled === false ? "" : "checked"}> Сосед включён</label>
@@ -2490,7 +2490,7 @@ let qosDhcp = [];
 function qosDeviceRow(d = {}) {
   return `<tr data-row><td><input type="checkbox" name="enabled" ${d.enabled === false ? "" : "checked"}></td>
     <td><input name="name" value="${esc(d.name ?? "")}" size="16"></td>
-    <td><input name="ip" value="${esc(d.ip ?? "")}" size="15" placeholder="192.168.88.20"></td>
+    <td><input name="ip" value="${esc(d.ip ?? "")}" size="15" placeholder="192.168.1.20"></td>
     <td><input name="down" type="number" min="0.1" step="0.1" class="narrow" value="${d.down ?? ""}"></td>
     <td><input name="up" type="number" min="0.1" step="0.1" class="narrow" value="${d.up ?? ""}"></td>
     <td><button type="button" class="danger" data-del-row>✕</button></td></tr>`;

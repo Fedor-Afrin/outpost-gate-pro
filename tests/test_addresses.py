@@ -32,7 +32,7 @@ class FakeKernel:
 def env(tmp_path, monkeypatch):
     cfg = tmp_path / "router.yaml"
     cfg.write_text(yaml.safe_dump({"ip": {"addresses": [
-        {"address": "192.168.88.1/24", "interface": "eth1"},  # без id — как в исходном конфиге
+        {"address": "192.168.1.1/24", "interface": "eth1"},  # без id — как в исходном конфиге
     ]}}))
     store = ConfigStore(str(cfg), str(tmp_path / "data"))
     kernel = FakeKernel()
@@ -45,7 +45,7 @@ def env(tmp_path, monkeypatch):
 def test_startup_applies_and_assigns_ids(env):
     store, kernel, _ = env
     svc.apply_all(wait_seconds=0)
-    assert ("eth1", "192.168.88.1/24") in kernel.addrs
+    assert ("eth1", "192.168.1.1/24") in kernel.addrs
     assert store.load()["ip"]["addresses"][0]["id"] == 1
 
 
@@ -54,7 +54,7 @@ def test_print_shows_dynamic(env):
     rows = svc.list_addresses()
     static = [r for r in rows if not r.dynamic]
     dynamic = [r for r in rows if r.dynamic]
-    assert static[0].address == "192.168.88.1/24" and static[0].network == "192.168.88.0"
+    assert static[0].address == "192.168.1.1/24" and static[0].network == "192.168.1.0"
     assert not static[0].invalid
     assert dynamic[0].address == "172.18.0.2/16" and dynamic[0].id is None
 
@@ -76,9 +76,9 @@ def test_disable_enable(env):
     _, kernel, _ = env
     svc.apply_all(wait_seconds=0)
     svc.update_address(1, AddressUpdate(disabled=True))
-    assert ("eth1", "192.168.88.1/24") not in kernel.addrs
+    assert ("eth1", "192.168.1.1/24") not in kernel.addrs
     svc.update_address(1, AddressUpdate(disabled=False))
-    assert ("eth1", "192.168.88.1/24") in kernel.addrs
+    assert ("eth1", "192.168.1.1/24") in kernel.addrs
 
 
 def test_errors(env):
@@ -86,7 +86,7 @@ def test_errors(env):
         svc.add_address(AddressCreate(address="1.1.1.1/24", interface="eth9"))
     assert e.value.status == 400
     with pytest.raises(svc.AddressError) as e:
-        svc.add_address(AddressCreate(address="192.168.88.1/24", interface="eth1"))
+        svc.add_address(AddressCreate(address="192.168.1.1/24", interface="eth1"))
     assert e.value.status == 409
     with pytest.raises(svc.AddressError) as e:
         svc.remove_address(99)
