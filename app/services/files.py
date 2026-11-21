@@ -21,7 +21,6 @@ import os
 import pwd
 import re
 import shutil
-import signal
 import subprocess
 import tempfile
 import threading
@@ -351,17 +350,13 @@ def apply(cfg: FilesConfig | None = None) -> None:
         for u in cfg.users:
             _set_enabled(u.name, u.enabled)
         conf = str(_data("smb.conf"))
-        if _smbd.running():
-            _smbd.signal(signal.SIGHUP)
-        else:
-            _smbd.start(["smbd", "--foreground", "--no-process-group", "--debug-stdout", "-s", conf])
+        # SIGHUP только перечитывает конфиг и не меняет адреса, на которых слушает smbd:
+        # снятый сегмент продолжал обслуживаться. Поэтому процессы перезапускаются.
+        _smbd.stop()
+        _smbd.start(["smbd", "--foreground", "--no-process-group", "--debug-stdout", "-s", conf])
+        _nmbd.stop()
         if cfg.netbios:
-            if _nmbd.running():
-                _nmbd.signal(signal.SIGHUP)
-            else:
-                _nmbd.start(["nmbd", "--foreground", "--no-process-group", "--debug-stdout", "-s", conf])
-        else:
-            _nmbd.stop()
+            _nmbd.start(["nmbd", "--foreground", "--no-process-group", "--debug-stdout", "-s", conf])
 
 
 def update(new: FilesConfig) -> FilesStatus:
