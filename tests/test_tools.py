@@ -20,7 +20,7 @@ def test_parse_ping():
     assert tools.parse_ping_line("64 bytes from 8.8.8.8: icmp_seq=3 ttl=117 time=12.4 ms") == \
         {"type": "row", "row": {"seq": 3, "from": "8.8.8.8", "ttl": 117, "time_ms": 12.4, "status": "ok"}}
     assert tools.parse_ping_line("no answer yet for icmp_seq=2")["row"] == {"seq": 2, "status": "timeout"}
-    unreach = tools.parse_ping_line("From 192.168.88.1 icmp_seq=1 Destination Host Unreachable")
+    unreach = tools.parse_ping_line("From 192.168.1.1 icmp_seq=1 Destination Host Unreachable")
     assert unreach["row"]["status"] == "Destination Host Unreachable"
     assert tools.parse_ping_line("4 packets transmitted, 3 received, 25% packet loss, time 3004ms")["data"] == \
         {"sent": 4, "received": 3, "loss": 25.0}
@@ -42,11 +42,11 @@ def test_parse_traceroute():
 
 
 def test_parse_neighbors():
-    data = [{"dst": "192.168.88.20", "dev": "br-lan", "lladdr": "00:0B:82:aa:bb:cc", "state": ["REACHABLE"]},
-            {"dst": "192.168.88.3", "dev": "br-lan", "state": ["FAILED"]},
+    data = [{"dst": "192.168.1.20", "dev": "br-lan", "lladdr": "00:0B:82:aa:bb:cc", "state": ["REACHABLE"]},
+            {"dst": "192.168.1.3", "dev": "br-lan", "state": ["FAILED"]},
             {"dst": "fe80::1", "dev": "br-lan", "lladdr": "aa:aa:aa:aa:aa:aa", "state": ["STALE"]}]
     rows = tools.parse_neighbors(data, {"00:0b:82:aa:bb:cc": "Телефон"})
-    assert [r["ip"] for r in rows] == ["192.168.88.3", "192.168.88.20"]          # IPv6 пропущен, сортировка
+    assert [r["ip"] for r in rows] == ["192.168.1.3", "192.168.1.20"]          # IPv6 пропущен, сортировка
     assert rows[1]["mac"] == "00:0b:82:aa:bb:cc" and rows[1]["name"] == "Телефон"
     assert rows[0]["mac"] is None and rows[0]["state"] == "FAILED"
 
@@ -95,19 +95,19 @@ def test_tcp_probe_and_port_scan():
 
 def test_scan_ping_plus_arp(monkeypatch):
     async def fake_ping(ip, iface=None):
-        return 1.5 if ip == "192.168.88.10" else None
+        return 1.5 if ip == "192.168.1.10" else None
     monkeypatch.setattr(tools, "_ping_once", fake_ping)
     monkeypatch.setattr(tools, "neighbors", lambda: [
-        {"ip": "192.168.88.10", "mac": "00:0b:82:00:00:01", "vendor": "Grandstream", "name": "GXP", "interface": "br-lan", "state": "REACHABLE"},
-        {"ip": "192.168.88.11", "mac": "da:00:00:00:00:02", "vendor": "случайный MAC", "name": None, "interface": "br-lan", "state": "STALE"},
-        {"ip": "192.168.88.12", "mac": None, "vendor": None, "name": None, "interface": "br-lan", "state": "FAILED"},
+        {"ip": "192.168.1.10", "mac": "00:0b:82:00:00:01", "vendor": "Grandstream", "name": "GXP", "interface": "br-lan", "state": "REACHABLE"},
+        {"ip": "192.168.1.11", "mac": "da:00:00:00:00:02", "vendor": "случайный MAC", "name": None, "interface": "br-lan", "state": "STALE"},
+        {"ip": "192.168.1.12", "mac": None, "vendor": None, "name": None, "interface": "br-lan", "state": "FAILED"},
         {"ip": "10.0.0.5", "mac": "00:00:00:00:00:03", "vendor": None, "name": None, "interface": "eth1", "state": "REACHABLE"},
     ])
-    events = collect(tools.scan({"network": "192.168.88.0/28"}))
+    events = collect(tools.scan({"network": "192.168.1.0/28"}))
     rows = [e["row"] for e in events if e["type"] == "row"]
-    assert [(r["ip"], r["source"]) for r in rows] == [("192.168.88.10", "ping"), ("192.168.88.11", "arp")]
+    assert [(r["ip"], r["source"]) for r in rows] == [("192.168.1.10", "ping"), ("192.168.1.11", "arp")]
     assert rows[0]["name"] == "GXP" and rows[0]["ping_ms"] == 1.5
-    assert events[-1]["data"] == {"network": "192.168.88.0/28", "scanned": 14, "found": 2}
+    assert events[-1]["data"] == {"network": "192.168.1.0/28", "scanned": 14, "found": 2}
 
 
 def test_scan_filters_by_interface(monkeypatch):
@@ -116,10 +116,10 @@ def test_scan_filters_by_interface(monkeypatch):
         return None
     monkeypatch.setattr(tools, "_ping_once", fake_ping)
     monkeypatch.setattr(tools, "neighbors", lambda: [
-        {"ip": "192.168.88.11", "mac": "aa:00:00:00:00:01", "vendor": None, "name": None, "interface": "br-lan", "state": "STALE"},
-        {"ip": "192.168.88.12", "mac": "aa:00:00:00:00:02", "vendor": None, "name": None, "interface": "eth0", "state": "STALE"}])
-    events = collect(tools.scan({"network": "192.168.88.0/28", "interface": "br-lan"}))
-    assert [e["row"]["ip"] for e in events if e["type"] == "row"] == ["192.168.88.11"]
+        {"ip": "192.168.1.11", "mac": "aa:00:00:00:00:01", "vendor": None, "name": None, "interface": "br-lan", "state": "STALE"},
+        {"ip": "192.168.1.12", "mac": "aa:00:00:00:00:02", "vendor": None, "name": None, "interface": "eth0", "state": "STALE"}])
+    events = collect(tools.scan({"network": "192.168.1.0/28", "interface": "br-lan"}))
+    assert [e["row"]["ip"] for e in events if e["type"] == "row"] == ["192.168.1.11"]
 
 
 # --- DNS роутера ------------------------------------------------------------------------------

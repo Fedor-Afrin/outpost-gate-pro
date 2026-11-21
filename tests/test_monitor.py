@@ -77,30 +77,30 @@ def test_interface_counters(tmp_path, monkeypatch):
 
 
 def test_accounting_ruleset_and_parse():
-    t = monitor.acct_ruleset(["192.168.88.0/24", "10.30.0.0/24"])
+    t = monitor.acct_ruleset(["192.168.1.0/24", "10.30.0.0/24"])
     assert "table inet outpost_acct" in t and "policy accept" in t
-    assert "ip saddr { 192.168.88.0/24, 10.30.0.0/24 } update @up { ip saddr counter }" in t
+    assert "ip saddr { 192.168.1.0/24, 10.30.0.0/24 } update @up { ip saddr counter }" in t
     assert "counter;" in monitor.acct_ruleset(["10.0.0.0/24"], variant=1)
     listing = """table inet outpost_acct {
         set up {
                 type ipv4_addr
                 size 4096
                 flags dynamic
-                elements = { 192.168.88.20 counter packets 10 bytes 1500, 192.168.88.21 counter packets 1 bytes 60 }
+                elements = { 192.168.1.20 counter packets 10 bytes 1500, 192.168.1.21 counter packets 1 bytes 60 }
         }
 }"""
-    assert monitor.parse_acct(listing) == {"192.168.88.20": 1500, "192.168.88.21": 60}
+    assert monitor.parse_acct(listing) == {"192.168.1.20": 1500, "192.168.1.21": 60}
 
 
 # --- сборщик целиком (без системы: источники подменены) ----------------------------------------
 @pytest.fixture
 def fake(tmp_path, monkeypatch):
-    seg1 = LanConfig(id="lan1", name="LAN", address="192.168.88.1/24", enabled=True)
+    seg1 = LanConfig(id="lan1", name="LAN", address="192.168.1.1/24", enabled=True)
     seg2 = LanConfig(id="lan2", name="Phones", address="10.30.0.1/24", vlan_id=30, trunk_ports=["eth1"], enabled=True)
     topo = {"roles": {"eth0": ("wan", "WAN"), "br-lan": ("lan", "LAN"), "br-lan2": ("lan", "Phones"),
                       "eth1": ("port", "LAN"), "eth1.30": ("vlan", "Phones"), "wg0": ("vpn", "WireGuard")},
-            "wan": "eth0", "segments": [seg1, seg2], "nets": ["192.168.88.0/24", "10.30.0.0/24"]}
-    state = {"if": {"eth0": 1000, "br-lan": 500}, "acct": ({"192.168.88.20": 100}, {"192.168.88.20": 1000})}
+            "wan": "eth0", "segments": [seg1, seg2], "nets": ["192.168.1.0/24", "10.30.0.0/24"]}
+    state = {"if": {"eth0": 1000, "br-lan": 500}, "acct": ({"192.168.1.20": 100}, {"192.168.1.20": 1000})}
 
     def counters(names=None):
         return {n: {"rx_bytes": v, "tx_bytes": v // 2, "rx_errors": 0, "tx_errors": 1, "rx_dropped": 0,
@@ -118,7 +118,7 @@ def fake(tmp_path, monkeypatch):
     monkeypatch.setattr(monitor, "disks", lambda: [{"name": "data", "path": "/var/lib", "total": 100, "used": 40, "percent": 40.0}])
     monkeypatch.setattr(monitor, "get_config", lambda: MonitoringConfig(ping_targets=["1.1.1.1", "9.9.9.9"]))
     monkeypatch.setattr(monitor.Collector, "_collect_slow", lambda self, topo: {
-        "leases": [{"ip": "192.168.88.20", "mac": "aa:aa:aa:aa:aa:01", "lan": "lan1", "name": "laptop"}],
+        "leases": [{"ip": "192.168.1.20", "mac": "aa:aa:aa:aa:aa:01", "lan": "lan1", "name": "laptop"}],
         "dhcp": [{"id": "lan1", "name": "LAN", "leases": 1}, {"id": "lan2", "name": "Phones", "leases": 0}],
         "vpn": {"kind": "wireguard", "up": True},
         "routing": {"ospf_neighbors": 1, "bgp": [{"peer": "10.8.0.1", "remote_as": 65000, "description": "HQ",
@@ -136,7 +136,7 @@ def test_collect_snapshot_rates_and_history(fake):
     col, state, tmp = fake
     col.collect(now=1_000_000_000)
     state["if"] = {"eth0": 11000, "br-lan": 1500}
-    state["acct"] = ({"192.168.88.20": 600}, {"192.168.88.20": 21000})
+    state["acct"] = ({"192.168.1.20": 600}, {"192.168.1.20": 21000})
     s = col.collect(now=1_000_000_010)
     eth0 = next(i for i in s["interfaces"] if i["name"] == "eth0")
     assert eth0["role"] == "wan" and eth0["rx_rate"] == 1000.0 and eth0["tx_rate"] == 500.0
@@ -144,7 +144,7 @@ def test_collect_snapshot_rates_and_history(fake):
     assert s["wan"] == {"interface": "eth0", "up": True, "gateway": "203.0.113.1"}
     assert [(p["name"], p["target"]) for p in s["ping"]] == [("gateway", "203.0.113.1"), ("1.1.1.1", "1.1.1.1"), ("9.9.9.9", "9.9.9.9")]
     c = s["clients"][0]
-    assert (c["ip"], c["name"], c["segment"], c["rx_rate"], c["tx_rate"]) == ("192.168.88.20", "laptop", "LAN", 2000.0, 50.0)
+    assert (c["ip"], c["name"], c["segment"], c["rx_rate"], c["tx_rate"]) == ("192.168.1.20", "laptop", "LAN", 2000.0, 50.0)
     hist = col.history.series("if:eth0:rx", "1h", 1_000_000_010)["values"]
     assert hist[-1] == 1000.0 and col.history.series("ping:1.1.1.1:rtt", "1h", 1_000_000_010)["values"][-1] == 12.0
     # файл для Zabbix agent
@@ -184,7 +184,7 @@ def test_prometheus_text(fake):
     assert t.count("# TYPE og_interface_receive_bytes_total counter") == 1
     assert 'og_ping_rtt_seconds{target="1.1.1.1",name="1.1.1.1"} 0.012' in t
     assert 'og_ping_loss_ratio{target="9.9.9.9",name="9.9.9.9"} 1.0' in t
-    assert 'og_client_receive_bytes_total{ip="192.168.88.20",name="laptop",mac="aa:aa:aa:aa:aa:01",segment="LAN"} 1000' in t
+    assert 'og_client_receive_bytes_total{ip="192.168.1.20",name="laptop",mac="aa:aa:aa:aa:aa:01",segment="LAN"} 1000' in t
     assert 'og_bgp_peer_up{peer="10.8.0.1",remote_as="65000",description="HQ"} 1' in t
     assert 'og_vpn_up{type="wireguard"} 1' in t and "og_smb_sessions 2" in t
     assert 'og_dhcp_leases_active{segment="Phones",lan="lan2"} 0' in t
@@ -192,20 +192,20 @@ def test_prometheus_text(fake):
 
 
 def test_metrics_access():
-    lan = ["192.168.88.0/24"]
+    lan = ["192.168.1.0/24"]
     off = MonitoringConfig()
-    assert exporters.metrics_access(off, "192.168.88.5", None, None, lan)[0] == 404
+    assert exporters.metrics_access(off, "192.168.1.5", None, None, lan)[0] == 404
     on = MonitoringConfig(prometheus={"enabled": True, "allowed": ["10.0.0.5"]})
-    assert exporters.metrics_access(on, "192.168.88.5", None, None, lan) is None
+    assert exporters.metrics_access(on, "192.168.1.5", None, None, lan) is None
     assert exporters.metrics_access(on, "10.0.0.5", None, None, lan) is None
     assert exporters.metrics_access(on, "127.0.0.1", None, None, lan) is None
     assert exporters.metrics_access(on, "203.0.113.7", None, None, lan)[0] == 403
     assert exporters.metrics_access(on, "testclient", None, None, lan)[0] == 403
     tok = MonitoringConfig(prometheus={"enabled": True, "token": "s3cret-token-0123456789"})
-    assert exporters.metrics_access(tok, "192.168.88.5", None, None, lan)[0] == 401
-    assert exporters.metrics_access(tok, "192.168.88.5", "Bearer s3cret-token-0123456789", None, lan) is None
-    assert exporters.metrics_access(tok, "192.168.88.5", None, "s3cret-token-0123456789", lan) is None
-    assert exporters.metrics_access(tok, "192.168.88.5", "Bearer wrong", None, lan)[0] == 401
+    assert exporters.metrics_access(tok, "192.168.1.5", None, None, lan)[0] == 401
+    assert exporters.metrics_access(tok, "192.168.1.5", "Bearer s3cret-token-0123456789", None, lan) is None
+    assert exporters.metrics_access(tok, "192.168.1.5", None, "s3cret-token-0123456789", lan) is None
+    assert exporters.metrics_access(tok, "192.168.1.5", "Bearer wrong", None, lan)[0] == 401
 
 
 # --- настройки --------------------------------------------------------------------------------
@@ -234,13 +234,13 @@ def test_config_validation():
 
 def test_snmpd_conf():
     c = MonitoringConfig(snmp={"enabled": True, "community": "office", "allowed": ["10.0.0.5"], "location": "Server room"})
-    t = exporters.snmpd_conf(c, ["192.168.88.0/24"], "office")
+    t = exporters.snmpd_conf(c, ["192.168.1.0/24"], "office")
     assert "agentAddress udp:161" in t and 'sysName "office"' in t and 'sysLocation "Server room"' in t
-    assert "rocommunity office 192.168.88.0/24" in t and "rocommunity office 10.0.0.5" in t
+    assert "rocommunity office 192.168.1.0/24" in t and "rocommunity office 10.0.0.5" in t
     assert "rocommunity office 127.0.0.1" in t and "createUser" not in t
     v3 = MonitoringConfig(snmp={"enabled": True, "version": "v3", "user": "zbx",
                                 "auth_password": "authpass1", "priv_password": "privpass1"})
-    t = exporters.snmpd_conf(v3, ["192.168.88.0/24"], "office")
+    t = exporters.snmpd_conf(v3, ["192.168.1.0/24"], "office")
     assert 'createUser zbx SHA "authpass1" AES "privpass1"' in t and "rouser zbx priv" in t
     assert "rocommunity" not in t
 
@@ -313,7 +313,7 @@ def test_initconfig_and_host_ssh_port(monkeypatch):
     d = initconfig.build({"identity": "office", "timezone": "Asia/Jerusalem",
                           "wan": {"interface": "ens18", "mode": "none"},
                           "wan2": {"interface": "ens20", "mode": "dhcp"}, "multiwan_mode": "balance",
-                          "lan": {"address": "192.168.88.1/24", "ports": ["ens19"], "wan_management": True}})
+                          "lan": {"address": "192.168.1.1/24", "ports": ["ens19"], "wan_management": True}})
     assert d["wan"] == {"interface": "ens18", "mode": "none"} and d["wan2"]["enabled"] is True
     assert d["lan"]["ports"] == ["ens19"] and d["lan"]["enabled"] is True and d["multiwan"]["mode"] == "balance"
     assert d["firewall"] == {"wan-management": True} and d["ntp"]["timezone"] == "Asia/Jerusalem"

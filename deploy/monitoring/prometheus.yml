@@ -17,6 +17,6 @@ scrape_configs:
         labels:
           router: dev
       # роутер в сети (режим host / ВМ / железо): адрес LAN и порт веб-интерфейса 80
-      # - targets: ["192.168.88.1:80"]
+      # - targets: ["192.168.1.1:80"]
       #   labels:
       #     router: office

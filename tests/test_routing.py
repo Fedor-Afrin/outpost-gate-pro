@@ -13,7 +13,7 @@ def cfg(**kw):
 def test_ospf_conf():
     c = cfg(router_id="10.255.0.1", ospf={
         "enabled": True,
-        "networks": [{"network": "192.168.88.1/24", "area": 0}, {"network": "10.8.0.0/24", "area": "0.0.0.0"}],
+        "networks": [{"network": "192.168.1.1/24", "area": 0}, {"network": "10.8.0.0/24", "area": "0.0.0.0"}],
         "interfaces": [{"name": "br-lan", "passive": True},
                        {"name": "wg0", "cost": 10, "network_type": "point-to-point", "auth_key": "s3cret"}],
         "redistribute": ["connected"], "default_route": "always"})
@@ -23,7 +23,7 @@ def test_ospf_conf():
     assert " ip ospf message-digest-key 1 md5 s3cret" in t
     assert "interface br-lan\n ip ospf passive\nexit" in t
     assert " ospf router-id 10.255.0.1" in t
-    assert " network 192.168.88.0/24 area 0.0.0.0" in t
+    assert " network 192.168.1.0/24 area 0.0.0.0" in t
     assert " redistribute connected" in t
     assert " default-information originate always" in t
     assert "router bgp" not in t
@@ -31,10 +31,10 @@ def test_ospf_conf():
 
 
 def test_bgp_conf_with_filters():
-    c = cfg(bgp={"enabled": True, "asn": 65010, "networks": ["192.168.88.0/24"],
+    c = cfg(bgp={"enabled": True, "asn": 65010, "networks": ["192.168.1.0/24"],
                  "neighbors": [{"address": "10.8.0.1", "remote_as": 65000, "description": "HQ",
                                 "password": "pw", "multihop": 2, "prefix_in": ["10.0.0.0/8 le 24"],
-                                "prefix_out": ["192.168.88.0/24"]},
+                                "prefix_out": ["192.168.1.0/24"]},
                                {"address": "10.8.0.9", "remote_as": 65010, "enabled": False,
                                 "update_source": "lo", "keepalive": 10, "hold": 30}]})
     t = routing.frr_conf(c)
@@ -49,7 +49,7 @@ def test_bgp_conf_with_filters():
     assert "ip prefix-list BGP-N1-IN seq 5 permit 10.0.0.0/8 le 24" in t
     assert "  neighbor 10.8.0.1 prefix-list BGP-N1-IN in" in t
     assert "  neighbor 10.8.0.1 prefix-list BGP-N1-OUT out" in t
-    assert "  network 192.168.88.0/24" in t
+    assert "  network 192.168.1.0/24" in t
     assert "router ospf" not in t
 
 
@@ -122,7 +122,7 @@ def test_parse_vtysh_json():
 
     routes = {"10.0.0.0/8": [{"prefix": "10.0.0.0/8", "protocol": "bgp", "selected": True, "distance": 20,
                               "metric": 0, "nexthops": [{"ip": "10.8.0.1", "interfaceName": "wg0", "active": True}]}],
-              "192.168.88.0/24": [{"prefix": "192.168.88.0/24", "protocol": "connected", "nexthops": []}],
+              "192.168.1.0/24": [{"prefix": "192.168.1.0/24", "protocol": "connected", "nexthops": []}],
               "172.16.0.0/16": [{"prefix": "172.16.0.0/16", "protocol": "ospf", "distance": 110, "metric": 20,
                                  "nexthops": [{"ip": "10.8.0.1", "interfaceName": "wg0"}]}]}
     r = routing.parse_routes(routes)
@@ -133,8 +133,8 @@ def test_parse_vtysh_json():
 
 def test_ospf_interfaces_and_peers(monkeypatch):
     monkeypatch.setattr(routing.netlink, "kernel_ipv4_addresses",
-                        lambda: [("br-lan", "192.168.88.1/24"), ("wg0", "10.8.0.2/24"), ("eth0", "203.0.113.2/24")])
-    c = cfg(ospf={"enabled": True, "networks": [{"network": "192.168.88.0/24"}, {"network": "10.8.0.0/24"}],
+                        lambda: [("br-lan", "192.168.1.1/24"), ("wg0", "10.8.0.2/24"), ("eth0", "203.0.113.2/24")])
+    c = cfg(ospf={"enabled": True, "networks": [{"network": "192.168.1.0/24"}, {"network": "10.8.0.0/24"}],
                   "interfaces": [{"name": "br-lan", "passive": True}]},
             bgp={"enabled": True, "neighbors": [{"address": "10.8.0.1", "remote_as": 1},
                                                  {"address": "10.8.0.7", "remote_as": 1, "enabled": False}]})

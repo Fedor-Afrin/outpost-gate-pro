@@ -33,7 +33,7 @@ class SegmentLimit(BaseModel):
 
 
 class DeviceLimit(BaseModel):
-    ip: str = Field(examples=["192.168.88.20"])
+    ip: str = Field(examples=["192.168.1.20"])
     name: str | None = None
     down: float | None = Field(None, gt=0, le=100000)
     up: float | None = Field(None, gt=0, le=100000)

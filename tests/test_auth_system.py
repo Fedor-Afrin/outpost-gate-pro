@@ -35,13 +35,13 @@ def test_first_run_admin_without_password(data, monkeypatch):
     monkeypatch.delenv("ROUTER_ADMIN_PASSWORD", raising=False)
     auth.ensure_admin()
     assert auth.list_users() == [{"name": "admin", "role": "full", "must_change": False, "has_password": False}]
-    user, token = auth.login("admin", "", "192.168.88.20")            # из LAN — пустой пароль
+    user, token = auth.login("admin", "", "192.168.1.20")            # из LAN — пустой пароль
     assert not user.has_password and not user.must_change
     assert auth.user_from_token(token).name == "admin"
     with pytest.raises(auth.AuthError, match="локальной сети"):
         auth.login("admin", "", "8.8.4.4")                            # из интернета — нельзя
     with pytest.raises(auth.AuthError):
-        auth.login("admin", "anything", "192.168.88.20")              # непустой пароль не подходит
+        auth.login("admin", "anything", "192.168.1.20")              # непустой пароль не подходит
     auth.ensure_admin()                                               # второй раз ничего не делает
     assert len(auth.list_users()) == 1
 

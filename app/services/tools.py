@@ -476,7 +476,7 @@ async def scan(params: dict) -> AsyncIterator[dict]:
     try:
         net = ipaddress.ip_network((params.get("network") or default_scan_network() or "").strip(), strict=False)
     except ValueError as e:
-        raise ToolError("укажите сеть, например 192.168.88.0/24") from e
+        raise ToolError("укажите сеть, например 192.168.1.0/24") from e
     if net.version != 4 or net.num_addresses > MAX_SCAN_HOSTS + 2:
         raise ToolError(f"сеть IPv4 не больше {MAX_SCAN_HOSTS} адресов (/22)")
     iface = check_iface(params.get("interface"))

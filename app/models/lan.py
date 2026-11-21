@@ -94,7 +94,7 @@ class DhcpOptions(BaseModel):
     tftp_servers_150: list[str] = Field(default_factory=list, description="150: TFTP-серверы (Cisco, Grandstream, Yealink)")
     sip_servers: list[str] = Field(default_factory=list, description="120: SIP-серверы (IP-адреса)")
     provisioning_url: str | None = Field(None, description="Опция 160/66 в виде URL автонастройки (Polycom, Yealink)")
-    static_routes: list[str] = Field(default_factory=list, description="121/249: «10.0.0.0/8 via 192.168.88.254»")
+    static_routes: list[str] = Field(default_factory=list, description="121/249: «10.0.0.0/8 via 192.168.1.254»")
     wpad_url: str | None = Field(None, description="252: автонастройка прокси (WPAD)")
     vendor_43: str | None = Field(None, description="43: vendor-specific, hex (точки доступа, телефоны)")
     custom: list[CustomOption] = Field(default_factory=list)
@@ -139,7 +139,7 @@ class DhcpOptions(BaseModel):
                 net = ipaddress.IPv4Network(m[1], strict=False)
                 gw = ipaddress.IPv4Address(m[2])
             except (TypeError, ValueError):
-                raise ValueError(f"маршрут '{r}': нужен вид 10.0.0.0/8 via 192.168.88.254") from None
+                raise ValueError(f"маршрут '{r}': нужен вид 10.0.0.0/8 via 192.168.1.254") from None
             out.append(f"{net} via {gw}")
         return out
 
@@ -169,11 +169,11 @@ class LanConfig(BaseModel):
     id: str = Field("lan1", description="lan1 — основной сегмент; lan2, lan3… — дополнительные")
     name: str = Field("LAN", max_length=32, description="Имя для людей")
     enabled: bool = False
-    address: str = Field("192.168.88.1/24", description="Адрес роутера в LAN — шлюз и DNS для клиентов")
+    address: str = Field("192.168.1.1/24", description="Адрес роутера в LAN — шлюз и DNS для клиентов")
     ports: list[str] = Field(default_factory=list, description="Порты в мосту; пусто = все, кроме WAN")
     dhcp_enabled: bool = True
-    pool_start: str | None = Field(None, examples=["192.168.88.10"])
-    pool_end: str | None = Field(None, examples=["192.168.88.254"])
+    pool_start: str | None = Field(None, examples=["192.168.1.10"])
+    pool_end: str | None = Field(None, examples=["192.168.1.254"])
     lease_time: str = Field("12h", examples=["1h", "12h", "1d"])
     wan_management: bool = Field(True, description="Разрешить веб и SSH со стороны WAN")
     dns_enabled: bool = Field(True, description="Роутер — DNS-сервер для этого сегмента")
@@ -242,7 +242,7 @@ class LanConfig(BaseModel):
     @classmethod
     def _address(cls, v: str) -> str:
         if "/" not in v:
-            raise ValueError("укажите маску: 192.168.88.1/24")
+            raise ValueError("укажите маску: 192.168.1.1/24")
         try:
             iface = ipaddress.ip_interface(v.strip())
         except ValueError as e:
@@ -319,7 +319,7 @@ class LanConfig(BaseModel):
             id=sid,
             name=lan.get("name") or ("LAN" if sid == "lan1" else sid.upper()),
             enabled=lan.get("enabled", False),
-            address=lan.get("address", "192.168.88.1/24"),
+            address=lan.get("address", "192.168.1.1/24"),
             ports=[] if ports in (None, "auto") else list(ports),
             dhcp_enabled=dhcp.get("enabled", True),
             pool_start=pool[0] if len(pool) == 2 else None,
@@ -412,7 +412,7 @@ HOSTNAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9-]{0,62}$")
 class StaticLease(BaseModel):
     """Закреплённый адрес: устройство с этим MAC всегда получает этот IP (reservation в Kea)."""
     mac: str = Field(examples=["00:0b:82:aa:bb:cc"])
-    ip: str = Field(examples=["192.168.88.20"])
+    ip: str = Field(examples=["192.168.1.20"])
     name: str | None = Field(None, max_length=64, examples=["Телефон бухгалтера"])
 
     @field_validator("mac")

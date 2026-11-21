@@ -108,12 +108,12 @@ def test_mount_options(monkeypatch):
 
 
 def test_parse_sessions():
-    data = {"sessions": {"3": {"username": "anna", "remote_machine": "192.168.88.20", "session_dialect": "SMB3_11",
+    data = {"sessions": {"3": {"username": "anna", "remote_machine": "192.168.1.20", "session_dialect": "SMB3_11",
                                "server_id": {"pid": "77"}}},
             "tcons": {"1": {"service": "Documents", "session_id": "3", "connected_at": "2026-11-13T10:00:00"}},
             "open_files": {"/x": {"opens": {"a": {"server_id": {"pid": "77"}}, "b": {"server_id": {"pid": "77"}}}}}}
     s = files.parse_sessions(data)[0]
-    assert (s.user, s.machine, s.protocol, s.share, s.open_files) == ("anna", "192.168.88.20", "SMB3_11", "Documents", 2)
+    assert (s.user, s.machine, s.protocol, s.share, s.open_files) == ("anna", "192.168.1.20", "SMB3_11", "Documents", 2)
     assert files.parse_sessions({}) == []
 
 

@@ -14,7 +14,7 @@ class FakeApi:
         self.calls = []
         self.data = {
             "/api/ip/addresses": [
-                {"id": 1, "address": "192.168.88.1/24", "network": "192.168.88.0", "interface": "br-lan",
+                {"id": 1, "address": "192.168.1.1/24", "network": "192.168.1.0", "interface": "br-lan",
                  "comment": "LAN", "disabled": False, "invalid": False, "dynamic": False},
                 {"id": None, "address": "172.18.0.2/16", "network": "172.18.0.0", "interface": "eth0",
                  "comment": None, "disabled": False, "invalid": False, "dynamic": True}],
@@ -22,51 +22,51 @@ class FakeApi:
                                      "model": "NanoPi R2S", "arch": "aarch64", "cpu_count": 4, "cpu_percent": 3.5,
                                      "memory": {"total": 1 << 30, "used": 1 << 28}, "disk": {"total": 8 << 30, "used": 2 << 30},
                                      "temperature": 48.0, "kernel": "6.1"},
-            "/api/lan": {"config": {"enabled": True, "address": "192.168.88.1/24", "dhcp_enabled": True,
-                                    "pool_start": "192.168.88.10", "pool_end": "192.168.88.254", "lease_time": "12h",
+            "/api/lan": {"config": {"enabled": True, "address": "192.168.1.1/24", "dhcp_enabled": True,
+                                    "pool_start": "192.168.1.10", "pool_end": "192.168.1.254", "lease_time": "12h",
                                     "wan_management": True},
                          "active": True, "dns_dhcp_running": True, "ports": [],
-                         "leases": [{"mac": "00:0b:82:aa:bb:cc", "ip": "192.168.88.20", "hostname": "GXP1625",
+                         "leases": [{"mac": "00:0b:82:aa:bb:cc", "ip": "192.168.1.20", "hostname": "GXP1625",
                                      "vendor": "Grandstream"}],
-                         "static_leases": [{"mac": "aa:aa:aa:aa:aa:aa", "ip": "192.168.88.5", "name": "Принтер"}]},
+                         "static_leases": [{"mac": "aa:aa:aa:aa:aa:aa", "ip": "192.168.1.5", "name": "Принтер"}]},
             "/api/dhcp": {"running": True, "segments": [
-                {"id": "lan1", "name": "LAN", "bridge": "br-lan", "enabled": True, "address": "192.168.88.1/24",
-                 "network": "192.168.88.0/24", "domain": "office.lan", "dns_enabled": True,
-                 "settings": {"dhcp_enabled": True, "pool_start": "192.168.88.10", "pool_end": "192.168.88.254",
-                              "lease_time": "12h", "dhcp_options": {"ntp_servers": ["192.168.88.1"]}},
-                 "static_leases": [{"mac": "aa:aa:aa:aa:aa:aa", "ip": "192.168.88.5", "name": "Принтер"}]},
+                {"id": "lan1", "name": "LAN", "bridge": "br-lan", "enabled": True, "address": "192.168.1.1/24",
+                 "network": "192.168.1.0/24", "domain": "office.lan", "dns_enabled": True,
+                 "settings": {"dhcp_enabled": True, "pool_start": "192.168.1.10", "pool_end": "192.168.1.254",
+                              "lease_time": "12h", "dhcp_options": {"ntp_servers": ["192.168.1.1"]}},
+                 "static_leases": [{"mac": "aa:aa:aa:aa:aa:aa", "ip": "192.168.1.5", "name": "Принтер"}]},
                 {"id": "lan2", "name": "Guests", "bridge": "br-lan2", "enabled": True, "address": "10.20.0.1/24",
                  "network": "10.20.0.0/24", "domain": "guest.lan", "dns_enabled": False,
                  "settings": {"dhcp_enabled": True, "pool_start": "10.20.0.10", "pool_end": "10.20.0.254",
                               "lease_time": "1h", "dhcp_options": {}}, "static_leases": []}],
-                "leases": [{"mac": "00:0b:82:aa:bb:cc", "ip": "192.168.88.20", "hostname": "GXP1625",
+                "leases": [{"mac": "00:0b:82:aa:bb:cc", "ip": "192.168.1.20", "hostname": "GXP1625",
                             "vendor": "Grandstream", "lan": "lan1"}]},
-            "/api/dns": {"running": True, "listen": ["192.168.88.1"], "forwarders": ["1.1.1.1"], "auto_names": [
-                             {"zone": "office.lan", "name": "gxp1625", "type": "A", "value": "192.168.88.20", "source": "dhcp"}],
+            "/api/dns": {"running": True, "listen": ["192.168.1.1"], "forwarders": ["1.1.1.1"], "auto_names": [
+                             {"zone": "office.lan", "name": "gxp1625", "type": "A", "value": "192.168.1.20", "source": "dhcp"}],
                          "zones": [{"name": "office.lan"}],
                          "config": {"forwarders": [], "forward_only": False, "dnssec": False, "allow": [], "cache_mb": 64,
                                     "zones": [{"name": "office.lan", "ttl": 3600, "dhcp_names": True, "auto_ptr": True,
-                                               "records": [{"name": "pbx", "type": "A", "value": "192.168.88.5"}]},
-                                              {"name": "88.168.192.in-addr.arpa", "ttl": 3600, "dhcp_names": True,
+                                               "records": [{"name": "pbx", "type": "A", "value": "192.168.1.5"}]},
+                                              {"name": "1.168.192.in-addr.arpa", "ttl": 3600, "dhcp_names": True,
                                                "auto_ptr": True, "records": []}]}},
             "/api/ip/routes": [
-                {"id": 7, "dst_address": "10.0.0.0/8", "gateway": "192.168.88.254", "distance": 1, "interface": "br-lan",
+                {"id": 7, "dst_address": "10.0.0.0/8", "gateway": "192.168.1.254", "distance": 1, "interface": "br-lan",
                  "comment": None, "disabled": False, "dynamic": False, "active": True, "connected": False, "static": True}],
             "/api/tools/neighbors": [
-                {"ip": "192.168.88.20", "mac": "00:0b:82:aa:bb:cc", "interface": "br-lan", "state": "REACHABLE",
+                {"ip": "192.168.1.20", "mac": "00:0b:82:aa:bb:cc", "interface": "br-lan", "state": "REACHABLE",
                  "vendor": "Grandstream", "name": "GXP1625"}],
-            "/api/tools/interfaces": {"interfaces": ["br-lan", "eth0", "eth1"], "scan_network": "192.168.88.0/24"},
+            "/api/tools/interfaces": {"interfaces": ["br-lan", "eth0", "eth1"], "scan_network": "192.168.1.0/24"},
             "/api/firewall": {"rules": [
                 {"id": 1, "chain": "input", "enabled": True, "action": "accept", "in_zone": "wan", "out_zone": "any",
                  "src": "203.0.113.0/24", "dst": None, "protocol": "tcp", "src_ports": None, "dst_ports": "22",
                  "description": "SSH", "packets": 5, "bytes": 300},
                 {"id": 2, "chain": "forward", "enabled": True, "action": "drop", "in_zone": "lan", "out_zone": "wan",
-                 "src": "192.168.88.50/32", "dst": None, "protocol": "all", "src_ports": None, "dst_ports": None,
+                 "src": "192.168.1.50/32", "dst": None, "protocol": "all", "src_ports": None, "dst_ports": None,
                  "description": None, "packets": 0, "bytes": 0},
                 {"id": 3, "chain": "input", "enabled": True, "action": "accept", "in_zone": "vpn", "out_zone": "any",
                  "src": None, "dst": None, "protocol": "icmp", "src_ports": None, "dst_ports": None,
                  "description": "ping", "packets": 0, "bytes": 0}],
-                "forwards": [{"id": 4, "enabled": True, "protocol": "tcp", "wan_port": "8080", "to_ip": "192.168.88.20",
+                "forwards": [{"id": 4, "enabled": True, "protocol": "tcp", "wan_port": "8080", "to_ip": "192.168.1.20",
                               "to_port": 80, "src": None, "description": "web", "packets": 1, "bytes": 60}],
                 "system": {"input": ["LAN — всё"], "forward": ["LAN → WAN"], "nat": ["masquerade"]},
                 "management_ports": [22, 8000]},
@@ -121,7 +121,7 @@ def test_print_and_numbers(ctx):
     c.execute(cx, "/ip address print", [])
     assert out[0] == "Flags: X - disabled, I - invalid, D - dynamic"
     assert out[1].split() == ["#", "ADDRESS", "NETWORK", "INTERFACE", "COMMENT"]
-    assert out[2].split()[:2] == ["0", "192.168.88.1/24"] and out[3].split()[:2] == ["1", "D"]
+    assert out[2].split()[:2] == ["0", "192.168.1.1/24"] and out[3].split()[:2] == ["1", "D"]
     c.execute(cx, "disable 0", ["ip", "address"])                        # относительно текущего меню
     assert cx.api.calls[-1] == ("PATCH", "/api/ip/addresses/1", {"disabled": True})
     with pytest.raises(c.CliError, match="dynamic"):
@@ -146,10 +146,10 @@ def test_add_and_errors(ctx):
 def test_leases_make_static(ctx):
     cx, out = ctx
     c.execute(cx, "/ip dhcp-server lease print", [])
-    assert out[2].split()[:3] == ["0", "S", "192.168.88.5"]              # закреплённые — первыми
+    assert out[2].split()[:3] == ["0", "S", "192.168.1.5"]              # закреплённые — первыми
     c.execute(cx, "/ip dhcp-server lease make-static 1", [])
     assert cx.api.calls[-1] == ("POST", "/api/lan/static-leases",
-                                {"mac": "00:0b:82:aa:bb:cc", "ip": "192.168.88.20", "name": "GXP1625"})
+                                {"mac": "00:0b:82:aa:bb:cc", "ip": "192.168.1.20", "name": "GXP1625"})
     with pytest.raises(c.CliError, match="только закреплённую"):
         c.execute(cx, "/ip dhcp-server lease remove 1", [])
 
@@ -229,7 +229,7 @@ def test_abbreviations(ctx):
 def test_print_detail_and_set(ctx):
     cx, out = ctx
     c.execute(cx, "/ip route print detail", [])
-    assert out[1].startswith("0 AS dst-address=10.0.0.0/8 gateway=192.168.88.254")
+    assert out[1].startswith("0 AS dst-address=10.0.0.0/8 gateway=192.168.1.254")
     c.execute(cx, '/ip route set 0 distance=5 comment="backup link"', [])
     assert cx.api.calls[-1] == ("PATCH", "/api/ip/routes/7", {"distance": 5, "comment": "backup link"})
     c.execute(cx, "/ip address print", [])
@@ -268,9 +268,9 @@ def test_firewall_cli(ctx):
 def test_nat_cli(ctx):
     cx, _ = ctx
     c.execute(cx, "/ip firewall nat add chain=dstnat action=dst-nat protocol=tcp dst-port=5060 "
-                  "to-addresses=192.168.88.21", [])
+                  "to-addresses=192.168.1.21", [])
     assert cx.api.calls[-1] == ("POST", "/api/firewall/forwards",
-                                {"enabled": True, "protocol": "tcp", "wan_port": "5060", "to_ip": "192.168.88.21"})
+                                {"enabled": True, "protocol": "tcp", "wan_port": "5060", "to_ip": "192.168.1.21"})
     with pytest.raises(c.CliError, match="srcnat"):
         c.execute(cx, "/ip firewall nat add chain=srcnat action=masquerade dst-port=1 to-addresses=1.1.1.1", [])
     c.execute(cx, "/ip firewall nat print", [])
@@ -319,11 +319,11 @@ def test_help_for_command(ctx):
 
 ROUTING = {
     "config": {"router_id": "10.255.0.1",
-               "ospf": {"enabled": True, "networks": [{"network": "192.168.88.0/24", "area": "0.0.0.0"}],
+               "ospf": {"enabled": True, "networks": [{"network": "192.168.1.0/24", "area": "0.0.0.0"}],
                         "interfaces": [{"name": "wg0", "cost": 10, "network_type": "point-to-point", "passive": False,
                                         "hello": 10, "dead": 40, "auth_key": "********"}],
                         "passive_default": False, "redistribute": ["connected"], "default_route": "none"},
-               "bgp": {"enabled": True, "asn": 65010, "networks": ["192.168.88.0/24"], "redistribute": [],
+               "bgp": {"enabled": True, "asn": 65010, "networks": ["192.168.1.0/24"], "redistribute": [],
                        "neighbors": [{"address": "10.8.0.1", "remote_as": 65000, "description": "HQ", "enabled": True,
                                       "keepalive": 60, "hold": 180, "prefix_in": [], "prefix_out": []}]}},
     "running": True, "installed": True, "router_id": "10.255.0.1",
@@ -421,7 +421,7 @@ def test_dhcp_and_dns_cli(ctx):
     m, path, body = cx.api.calls[-1]
     assert (m, path) == ("PUT", "/api/dns") and body["zones"][0]["records"][-1] == {"name": "www", "type": "CNAME", "value": "pbx"}
     cx.api.data["/api/dns"] = copy.deepcopy(snapshot)
-    c.execute(cx, "/ip dns static add name=5.88.168.192.in-addr.arpa type=PTR value=pbx.office.lan.", [])
+    c.execute(cx, "/ip dns static add name=5.1.168.192.in-addr.arpa type=PTR value=pbx.office.lan.", [])
     assert cx.api.calls[-1][2]["zones"][1]["records"] == [{"name": "5", "type": "PTR", "value": "pbx.office.lan."}]
     with pytest.raises(c.CliError, match="нет зоны"):
         c.execute(cx, "/ip dns static add name=x.example.com address=1.2.3.4", [])
@@ -434,9 +434,9 @@ def test_dhcp_and_dns_cli(ctx):
     assert body["forwarders"] == ["9.9.9.9", "1.1.1.1"] and body["dnssec"] is True
 
 
-FILES = {"running": True, "netbios_name": "OFFICE", "listen": ["192.168.88.1"], "disks_allowed": False, "devices": [],
+FILES = {"running": True, "netbios_name": "OFFICE", "listen": ["192.168.1.1"], "disks_allowed": False, "devices": [],
          "users_without_password": ["boris"],
-         "sessions": [{"user": "anna", "machine": "192.168.88.20", "protocol": "SMB3_11", "share": "Documents", "open_files": 2}],
+         "sessions": [{"user": "anna", "machine": "192.168.1.20", "protocol": "SMB3_11", "share": "Documents", "open_files": 2}],
          "config": {"enabled": True, "workgroup": "WORKGROUP", "netbios_name": None, "server_string": "OutpostGate Pro",
                     "segments": [], "min_protocol": "SMB2_10", "netbios": False, "disks": [],
                     "users": [{"name": "anna", "groups": ["acc"], "enabled": True, "uid": 20000},
@@ -488,7 +488,7 @@ def test_vlan_print(ctx):
     cx, out = ctx
     cx.api.data["/api/wan"] = {"interface": "eth1.100", "config": {"interface": "eth1", "mode": "dhcp", "vlan_id": 100}}
     cx.api.data["/api/lan"] = {**cx.api.data.get("/api/lan", {}), "segments": [
-        {"config": {"id": "lan1", "name": "LAN", "address": "192.168.88.1/24", "trunk_ports": [], "vlan_id": None},
+        {"config": {"id": "lan1", "name": "LAN", "address": "192.168.1.1/24", "trunk_ports": [], "vlan_id": None},
          "bridge": "br-lan", "active": True},
         {"config": {"id": "lan2", "name": "Phones", "address": "10.30.0.1/24", "trunk_ports": ["eth2", "eth3"], "vlan_id": 30},
          "bridge": "br-lan2", "active": True}]}
@@ -500,7 +500,7 @@ def test_vlan_print(ctx):
 def test_monitoring_cli(ctx):
     cx, out = ctx
     cx.api.data["/api/monitor"] = {"time": 1, "accounting": True, "accounting_error": None, "clients": [
-        {"ip": "192.168.88.20", "name": "laptop", "segment": "LAN", "rx_rate": 125000, "tx_rate": 1000, "rx_bytes": 2048, "tx_bytes": 10},
+        {"ip": "192.168.1.20", "name": "laptop", "segment": "LAN", "rx_rate": 125000, "tx_rate": 1000, "rx_bytes": 2048, "tx_bytes": 10},
         {"ip": "10.30.0.5", "name": None, "segment": "Phones", "rx_rate": 0, "tx_rate": 0, "rx_bytes": 0, "tx_bytes": 0}]}
     cx.api.data["/api/monitor/settings"] = {
         "config": {"ping_targets": ["1.1.1.1"], "prometheus": {"enabled": True, "token": "x" * 20, "allowed": []},
@@ -509,10 +509,10 @@ def test_monitoring_cli(ctx):
                    "zabbix": {"enabled": False, "server": [], "server_active": None, "hostname": None, "metadata": None}},
         "snmp": {"enabled": True, "installed": True, "running": True, "error": None, "flavor": None},
         "zabbix": {"enabled": False, "installed": True, "running": False, "error": None, "flavor": "agent2"},
-        "lan_networks": ["192.168.88.0/24"]}
+        "lan_networks": ["192.168.1.0/24"]}
     c.execute(cx, "/tool torch", [])
     assert out[0].split()[:3] == ["#", "ADDRESS", "NAME"]
-    assert out[1].split()[:6] == ["0", "192.168.88.20", "laptop", "LAN", "1.0Mbps", "8.0kbps"]
+    assert out[1].split()[:6] == ["0", "192.168.1.20", "laptop", "LAN", "1.0Mbps", "8.0kbps"]
     out.clear()
     c.execute(cx, "/snmp print", [])
     assert any("community: office" in l for l in out) and any("allowed: 10.0.0.5" in l for l in out)
@@ -545,7 +545,7 @@ def test_multiwan_ntp_wol_cli(ctx):
     cx.api.data["/api/system/ntp"] = {"config": {"enabled": True, "servers": ["pool.ntp.org"], "serve_lan": True,
                                                  "orphan": False}, "running": True, "synced": True, "stratum": 3,
                                       "reference": "162.159.200.1", "offset": -0.000012, "clock_control": False,
-                                      "serving": ["192.168.88.0/24"], "sources": [
+                                      "serving": ["192.168.1.0/24"], "sources": [
                                           {"address": "162.159.200.1", "state": "*", "stratum": 2, "reach": 255, "offset": 0.0001}]}
     out.clear()
     c.execute(cx, "/system ntp client print", [])
@@ -565,15 +565,15 @@ def test_scheduler_queue_export_cli(ctx):
     assert c.parse_limit("5M") == (5.0, 5.0)
     cx.api.data["/api/qos"] = {"config": {"enabled": True, "wan_up": 50, "wan_down": 200, "voice": True,
                                           "sip_ports": "5060-5061", "rtp_ports": "10000-20000", "segments": [],
-                                          "devices": [{"ip": "192.168.88.20", "name": "laptop", "up": 2, "down": 10, "enabled": True}]},
+                                          "devices": [{"ip": "192.168.1.20", "name": "laptop", "up": 2, "down": 10, "enabled": True}]},
                                "active": True, "error": None, "stats": [],
                                "segments": [{"id": "lan2", "name": "Guests", "network": "10.20.0.0/24", "bridge": "br-lan2"}]}
     c.execute(cx, "/queue simple print", [])
     row = next(l for l in out if l.strip().startswith("0 "))
-    assert row.split()[:4] == ["0", "laptop", "192.168.88.20", "2M/10M"]
-    c.execute(cx, "/queue simple add target=192.168.88.30 max-limit=1M/5M name=tv", [])
+    assert row.split()[:4] == ["0", "laptop", "192.168.1.20", "2M/10M"]
+    c.execute(cx, "/queue simple add target=192.168.1.30 max-limit=1M/5M name=tv", [])
     body = cx.api.calls[-1][2]
-    assert body["devices"][-1] == {"ip": "192.168.88.30", "name": "tv", "up": 1.0, "down": 5.0, "enabled": True}
+    assert body["devices"][-1] == {"ip": "192.168.1.30", "name": "tv", "up": 1.0, "down": 5.0, "enabled": True}
     c.execute(cx, "/queue segment set lan=Guests max-limit=5M/20M", [])
     assert cx.api.calls[-1][2]["segments"] == [{"lan": "lan2", "up": 5.0, "down": 20.0}]
     c.execute(cx, "/queue simple disable 0", [])

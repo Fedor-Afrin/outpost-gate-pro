@@ -15,14 +15,14 @@ def seg(**kw):
 
 # --- Kea ---------------------------------------------------------------------------------------
 def test_kea_conf_two_segments():
-    a = seg(dhcp_options={"ntp_servers": ["192.168.88.1"], "tftp_server": "tftp.office.lan",
-                          "boot_file": "cfg$mac.xml", "tftp_servers_150": ["192.168.88.5"],
-                          "sip_servers": ["192.168.88.5"], "static_routes": ["10.0.0.0/8 via 192.168.88.254"],
+    a = seg(dhcp_options={"ntp_servers": ["192.168.1.1"], "tftp_server": "tftp.office.lan",
+                          "boot_file": "cfg$mac.xml", "tftp_servers_150": ["192.168.1.5"],
+                          "sip_servers": ["192.168.1.5"], "static_routes": ["10.0.0.0/8 via 192.168.1.254"],
                           "provisioning_url": "http://pbx/prov", "time_offset": 7200, "mtu": 1400,
                           "custom": [{"code": 224, "type": "uint16", "value": "443"}]})
     b = seg(id="lan2", name="Guests", address="10.20.0.1/24", ports=["eth3"], dns_enabled=False,
             domain="guest.lan", lease_time="1h")
-    conf = dhcp.kea_conf([(a, [StaticLease(mac="00:0b:82:aa:bb:cc", ip="192.168.88.5", name="GXP1625"),
+    conf = dhcp.kea_conf([(a, [StaticLease(mac="00:0b:82:aa:bb:cc", ip="192.168.1.5", name="GXP1625"),
                                StaticLease(mac="00:0b:82:00:00:09", ip="10.20.0.99")]),     # чужая сеть — мимо
                           (b, [StaticLease(mac="00:0b:82:00:00:01", ip="10.20.0.9", name="Телефон")])],
                          ["1.1.1.1", "8.8.8.8"], "/var/lib/kea/kea-leases4.csv")
@@ -30,20 +30,20 @@ def test_kea_conf_two_segments():
     d = conf["Dhcp4"]
     assert d["interfaces-config"]["interfaces"] == ["br-lan", "br-lan2"]
     s1, s2 = d["subnet4"]
-    assert (s1["id"], s1["subnet"], s1["interface"]) == (1, "192.168.88.0/24", "br-lan")
-    assert s1["pools"] == [{"pool": "192.168.88.10 - 192.168.88.254"}] and s1["valid-lifetime"] == 43200
+    assert (s1["id"], s1["subnet"], s1["interface"]) == (1, "192.168.1.0/24", "br-lan")
+    assert s1["pools"] == [{"pool": "192.168.1.10 - 192.168.1.254"}] and s1["valid-lifetime"] == 43200
     opts = {o.get("name") or o["code"]: o["data"] for o in s1["option-data"]}
-    assert opts["routers"] == "192.168.88.1" and opts["domain-name-servers"] == "192.168.88.1"
+    assert opts["routers"] == "192.168.1.1" and opts["domain-name-servers"] == "192.168.1.1"
     assert opts["domain-name"] == "office.lan" and opts["domain-search"] == "office.lan"
-    assert opts["ntp-servers"] == "192.168.88.1" and opts["tftp-server-name"] == "tftp.office.lan"
+    assert opts["ntp-servers"] == "192.168.1.1" and opts["tftp-server-name"] == "tftp.office.lan"
     assert opts["boot-file-name"] == "cfg$mac.xml" and opts["time-offset"] == "7200" and opts["interface-mtu"] == "1400"
-    assert opts[150] == "c0a85805" and opts[120] == "01c0a85805"
-    assert opts[121] == opts[249] == "080ac0a858fe"
+    assert opts[150] == "c0a80105" and opts[120] == "01c0a80105"
+    assert opts[121] == opts[249] == "080ac0a801fe"
     assert opts[160] == b"http://pbx/prov".hex() and opts[224] == "01bb"
     raw = [o for o in s1["option-data"] if "code" in o]
     assert all(o["csv-format"] is False and o["space"] == "dhcp4" for o in raw)
     # закреплённый адрес — только в своей подсети; кириллическое имя не уходит как hostname
-    assert s1["reservations"] == [{"hw-address": "00:0b:82:aa:bb:cc", "ip-address": "192.168.88.5", "hostname": "GXP1625"}]
+    assert s1["reservations"] == [{"hw-address": "00:0b:82:aa:bb:cc", "ip-address": "192.168.1.5", "hostname": "GXP1625"}]
     assert s2["reservations"] == [{"hw-address": "00:0b:82:00:00:01", "ip-address": "10.20.0.9"}]
     # DNS на сегменте выключен — клиенты получают DNS провайдера
     o2 = {o.get("name"): o["data"] for o in s2["option-data"] if "name" in o}
@@ -66,7 +66,7 @@ def test_dhcp_option_validation():
         DhcpOptions(custom=[{"code": 200, "type": "text", "value": "a"}, {"code": 200, "type": "text", "value": "b"}])
     with pytest.raises(ValidationError):
         DhcpOptions(tftp_server='bad"name')
-    assert DhcpOptions(vendor_43="01:04:C0:A8:58:05").vendor_43 == "0104c0a85805"
+    assert DhcpOptions(vendor_43="01:04:C0:A8:01:05").vendor_43 == "0104c0a80105"
     assert CustomOption(code=200, type="bool", value="yes").hex() == "01"
     assert CustomOption(code=200, type="uint32", value="0x10").hex() == "00000010"
 
@@ -74,7 +74,7 @@ def test_dhcp_option_validation():
 def test_read_leases_and_migration(tmp_path, monkeypatch):
     monkeypatch.setattr(dhcp, "_data", lambda n: tmp_path / n)
     (tmp_path / "dnsmasq.leases").write_text(
-        "4102444800 00:0b:82:aa:bb:cc 192.168.88.20 GXP1625 *\n"
+        "4102444800 00:0b:82:aa:bb:cc 192.168.1.20 GXP1625 *\n"
         "0 da:a1:19:00:11:22 10.20.0.7 * *\n"
         "4102444800 da:a1:19:00:11:23 172.31.0.5 x *\n")                    # не в сегментах — пропуск
     segs = [(seg(), []), (seg(id="lan2", address="10.20.0.1/24", ports=["eth3"]), [])]
@@ -82,7 +82,7 @@ def test_read_leases_and_migration(tmp_path, monkeypatch):
     assert not (tmp_path / "dnsmasq.leases").exists()
     assert b"\r" not in dhcp.leases_file().read_bytes()           # Kea не принимает \r\n
     rows = dhcp.read_leases({1: "lan1", 2: "lan2"}, now=1_800_000_000)
-    assert [(r.ip, r.lan, r.hostname) for r in rows] == [("10.20.0.7", "lan2", None), ("192.168.88.20", "lan1", "GXP1625")]
+    assert [(r.ip, r.lan, r.hostname) for r in rows] == [("10.20.0.7", "lan2", None), ("192.168.1.20", "lan1", "GXP1625")]
     dhcp.migrate_dnsmasq_leases(segs)                                         # второй раз — ничего
 
 
@@ -110,29 +110,29 @@ def test_record_validation():
 def dns_cfg():
     return DnsConfig(forwarders=["9.9.9.9"], allow=["10.8.0.0/24"], zones=[
         DnsZone(name="office.lan", records=[
-            DnsRecord(name="pbx", type="A", value="192.168.88.5"),
+            DnsRecord(name="pbx", type="A", value="192.168.1.5"),
             DnsRecord(name="www", type="CNAME", value="pbx"),
             DnsRecord(name="@", type="MX", value="mail.example.com.", priority=5),
             DnsRecord(name="_sip._udp", type="SRV", value="pbx", port=5060),
-            DnsRecord(name="laptop", type="A", value="192.168.88.77", comment="вручную важнее DHCP")]),
+            DnsRecord(name="laptop", type="A", value="192.168.1.77", comment="вручную важнее DHCP")]),
         DnsZone(name="guest.lan", dhcp_names=False),
-        DnsZone(name="88.168.192.in-addr.arpa", records=[DnsRecord(name="5", type="PTR", value="pbx.office.lan.")]),
+        DnsZone(name="1.168.192.in-addr.arpa", records=[DnsRecord(name="5", type="PTR", value="pbx.office.lan.")]),
     ])
 
 
 def test_auto_names_and_ptr():
     cfg = dns_cfg()
     segs = [seg(), seg(id="lan2", address="10.20.0.1/24", ports=["eth3"], domain="guest.lan")]
-    leases = [Lease(ip="192.168.88.20", mac="aa:aa:aa:aa:aa:01", hostname="Laptop"),        # имя занято записью
-              Lease(ip="192.168.88.21", mac="aa:aa:aa:aa:aa:02", hostname="printer"),
-              Lease(ip="192.168.88.22", mac="aa:aa:aa:aa:aa:03", hostname="bad_name!"),
+    leases = [Lease(ip="192.168.1.20", mac="aa:aa:aa:aa:aa:01", hostname="Laptop"),        # имя занято записью
+              Lease(ip="192.168.1.21", mac="aa:aa:aa:aa:aa:02", hostname="printer"),
+              Lease(ip="192.168.1.22", mac="aa:aa:aa:aa:aa:03", hostname="bad_name!"),
               Lease(ip="10.20.0.50", mac="aa:aa:aa:aa:aa:04", hostname="guestphone")]       # dhcp_names выключены
-    static = {"lan1": [StaticLease(mac="00:0b:82:aa:bb:cc", ip="192.168.88.6", name="gxp")]}
+    static = {"lan1": [StaticLease(mac="00:0b:82:aa:bb:cc", ip="192.168.1.6", name="gxp")]}
     auto = dns.auto_names(cfg, segs, leases, static)
     got = {(a.zone, a.name, a.type, a.value, a.source) for a in auto}
-    assert ("office.lan", "router", "A", "192.168.88.1", "router") in got
-    assert ("office.lan", "printer", "A", "192.168.88.21", "dhcp") in got
-    assert ("office.lan", "gxp", "A", "192.168.88.6", "static-lease") in got
+    assert ("office.lan", "router", "A", "192.168.1.1", "router") in got
+    assert ("office.lan", "printer", "A", "192.168.1.21", "dhcp") in got
+    assert ("office.lan", "gxp", "A", "192.168.1.6", "static-lease") in got
     assert not any(a.name == "laptop" for a in auto)                     # своя запись важнее
     assert not any(a.name == "guestphone" for a in auto)
     assert ("guest.lan", "router", "A", "10.20.0.1", "router") in got
@@ -148,14 +148,14 @@ def test_hidden_auto_names():
     cfg = DnsConfig.model_validate(cfg.model_dump())
     assert cfg.zones[0].hidden == ["printer", "router"]
     segs = [seg()]
-    leases = [Lease(ip="192.168.88.21", mac="aa:aa:aa:aa:aa:02", hostname="printer"),
-              Lease(ip="192.168.88.23", mac="aa:aa:aa:aa:aa:05", hostname="nas")]
+    leases = [Lease(ip="192.168.1.21", mac="aa:aa:aa:aa:aa:02", hostname="printer"),
+              Lease(ip="192.168.1.23", mac="aa:aa:aa:aa:aa:05", hostname="nas")]
     auto = dns.auto_names(cfg, segs, leases, {})
     names = {(a.zone, a.name) for a in auto}
     assert ("office.lan", "nas") in names and ("office.lan", "ns") in names
     assert ("office.lan", "printer") not in names and ("office.lan", "router") not in names
     assert not any(a.type == "PTR" and a.value.startswith("printer.") for a in auto)
-    body = dns.zone_file(cfg.zones[0], [a for a in auto if a.zone == "office.lan"], 1, "192.168.88.1")
+    body = dns.zone_file(cfg.zones[0], [a for a in auto if a.zone == "office.lan"], 1, "192.168.1.1")
     assert "printer" not in body and "\nns IN A" in body
     with pytest.raises(ValueError):
         DnsZone(name="office.lan", hidden=["ns"])
@@ -168,17 +168,17 @@ def test_named_conf_and_zone_files(tmp_path, monkeypatch):
     auto = dns.auto_names(cfg, segs, [], {})
     files = dns.render(cfg, segs, auto, tmp_path)
     conf = files[tmp_path / "named.conf"]
-    assert "listen-on port 53 { 127.0.0.1; 192.168.88.1; };" in conf          # lan2 — DNS выключен
-    assert "acl trusted { 127.0.0.0/8; 192.168.88.0/24; 10.20.0.0/24; 10.8.0.0/24; };" in conf
+    assert "listen-on port 53 { 127.0.0.1; 192.168.1.1; };" in conf          # lan2 — DNS выключен
+    assert "acl trusted { 127.0.0.0/8; 192.168.1.0/24; 10.20.0.0/24; 10.8.0.0/24; };" in conf
     assert "forwarders { 9.9.9.9; };" in conf and "forward first;" in conf
-    assert 'zone "88.168.192.in-addr.arpa"' in conf and "dnssec-validation no;" in conf
+    assert 'zone "1.168.192.in-addr.arpa"' in conf and "dnssec-validation no;" in conf
     assert conf.index("acl trusted") < conf.index("options {")
     z = files[tmp_path / "db.office.lan"]
     assert "$ORIGIN office.lan." in z and "@ IN NS ns.office.lan." in z
     assert "www IN CNAME pbx" in z and "@ IN MX 5 mail.example.com." in z
-    assert "_sip._udp IN SRV 10 0 5060 pbx" in z and "laptop IN A 192.168.88.77 ; вручную важнее DHCP" in z
-    assert "ns IN A 192.168.88.1 ; auto: router" in z
-    r = files[tmp_path / "db.88.168.192.in-addr.arpa"]
+    assert "_sip._udp IN SRV 10 0 5060 pbx" in z and "laptop IN A 192.168.1.77 ; вручную важнее DHCP" in z
+    assert "ns IN A 192.168.1.1 ; auto: router" in z
+    r = files[tmp_path / "db.1.168.192.in-addr.arpa"]
     assert "@ IN NS localhost." in r and "5 IN PTR pbx.office.lan." in r and "77 IN PTR laptop.office.lan." in r
 
     # серийный номер меняется только при изменении содержимого
@@ -187,7 +187,7 @@ def test_named_conf_and_zone_files(tmp_path, monkeypatch):
     serial = json.loads(files[tmp_path / "serials.json"])["office.lan"]["serial"]
     again = dns.render(cfg, segs, auto, tmp_path)
     assert json.loads(again[tmp_path / "serials.json"])["office.lan"]["serial"] == serial
-    cfg.zones[0].records.append(DnsRecord(name="new", type="A", value="192.168.88.9"))
+    cfg.zones[0].records.append(DnsRecord(name="new", type="A", value="192.168.1.9"))
     changed = dns.render(cfg, segs, dns.auto_names(cfg, segs, [], {}), tmp_path)
     assert json.loads(changed[tmp_path / "serials.json"])["office.lan"]["serial"] > serial
     assert f"( {serial} " in files[tmp_path / "db.office.lan"]
@@ -199,7 +199,7 @@ def test_named_conf_auto_forwarders(tmp_path, monkeypatch):
     (tmp_path / "resolv").write_text("nameserver 1.1.1.1\nnameserver 127.0.0.11\nnameserver ::1\n")
     cfg = DnsConfig(forward_only=True, dnssec=True)
     assert dns.upstream(cfg) == ["1.1.1.1"]                     # loopback Docker не годится в forwarders
-    conf = dns.named_conf(cfg, ["192.168.88.1"], ["192.168.88.0/24"], dns.upstream(cfg), "/d")
+    conf = dns.named_conf(cfg, ["192.168.1.1"], ["192.168.1.0/24"], dns.upstream(cfg), "/d")
     assert "forward only;" in conf and "dnssec-validation auto;" in conf
     assert "forwarders" not in dns.named_conf(cfg, [], [], [], "/d")
 

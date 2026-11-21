@@ -69,7 +69,7 @@ def test_enable_builds_bridge(env):
     store, kernel, calls = env
     st = lan.update(LanConfig(enabled=True))
     assert kernel.master == {"eth0": "br-lan"}                     # WAN (eth1) не тронут
-    assert ("br-lan", "192.168.88.1/24") in kernel.addrs
+    assert ("br-lan", "192.168.1.1/24") in kernel.addrs
     assert ("br-lan", "172.19.0.2/16") in kernel.addrs             # адрес порта переехал на мост
     assert ("eth0", "172.19.0.2/16") not in kernel.addrs
     assert calls["fw"] == [("eth1", ["br-lan"], True, [])] and calls["dhcp"] == [[("lan1", 0)]] and calls["dns"] == 1
@@ -78,7 +78,7 @@ def test_enable_builds_bridge(env):
     assert roles == {"eth1": "wan", "eth0": "lan"}
     saved = store.load()
     assert saved["lan"]["ports"] == "auto"
-    assert saved["lan"]["dhcp-server"]["pool"] == "192.168.88.10-192.168.88.254"
+    assert saved["lan"]["dhcp-server"]["pool"] == "192.168.1.10-192.168.1.254"
     assert saved["firewall"] == {"wan-management": True}
     from app.services import dns
     assert saved["lan"]["domain"] == "office.lan" and dns.get_config().zone("office.lan")   # зона по умолчанию
@@ -123,7 +123,7 @@ def test_lan_config_validation():
     small = LanConfig(address="192.168.1.1/29")
     assert (small.pool_start, small.pool_end) == ("192.168.1.2", "192.168.1.6")
     with pytest.raises(ValueError, match="адрес роутера"):
-        LanConfig(address="192.168.88.1/24", pool_start="192.168.88.1")
+        LanConfig(address="192.168.1.1/24", pool_start="192.168.1.1")
     with pytest.raises(ValueError, match="вне сети"):
         LanConfig(pool_start="10.0.0.5")
     with pytest.raises(ValueError):
@@ -140,16 +140,16 @@ def test_leases_and_vendor(env, tmp_path, monkeypatch):
     (tmp_path / "data" / "kea").mkdir(exist_ok=True)
     (tmp_path / "data" / "kea" / "kea-leases4.csv").write_text(
         KEA_HEADER
-        + f"192.168.88.20,00:0b:82:aa:bb:cc,,43200,{far},1,0,0,GXP1625.office.lan.,0,\n"
-        + f"192.168.88.11,da:a1:19:00:11:22,,43200,{far},1,0,0,,0,\n"
-        + "192.168.88.12,da:a1:19:00:11:23,,43200,1000,1,0,0,old,0,\n"            # истекла
-        + f"192.168.88.13,da:a1:19:00:11:24,,43200,{far},1,0,0,declined,1,\n")   # не default
+        + f"192.168.1.20,00:0b:82:aa:bb:cc,,43200,{far},1,0,0,GXP1625.office.lan.,0,\n"
+        + f"192.168.1.11,da:a1:19:00:11:22,,43200,{far},1,0,0,,0,\n"
+        + "192.168.1.12,da:a1:19:00:11:23,,43200,1000,1,0,0,old,0,\n"            # истекла
+        + f"192.168.1.13,da:a1:19:00:11:24,,43200,{far},1,0,0,declined,1,\n")   # не default
     oui_file = tmp_path / "oui.txt"
     oui_file.write_text("00-0B-82   (hex)\t\tGrandstream Networks, Inc.\n")
     monkeypatch.setattr(oui, "OUI_FILES", [oui_file])
     oui._table.cache_clear()
     rows = lan.leases()
-    assert [r.ip for r in rows] == ["192.168.88.11", "192.168.88.20"]
+    assert [r.ip for r in rows] == ["192.168.1.11", "192.168.1.20"]
     assert rows[1].hostname == "GXP1625" and rows[1].vendor == "Grandstream Networks, Inc." and rows[1].lan == "lan1"
     assert rows[0].hostname is None and "случайный" in rows[0].vendor
     oui._table.cache_clear()
@@ -159,24 +159,24 @@ def test_static_leases(env):
     store, _, calls = env
     from app.models.lan import StaticLease
     lan.update(LanConfig(enabled=True))
-    view = lan.add_static(StaticLease(mac="00-0B-82-AA-BB-CC", ip="192.168.88.5", name="GXP1625"))
+    view = lan.add_static(StaticLease(mac="00-0B-82-AA-BB-CC", ip="192.168.1.5", name="GXP1625"))
     assert view[0].mac == "00:0b:82:aa:bb:cc" and not view[0].in_pool and view[0].valid
-    lan.add_static(StaticLease(mac="00:0b:82:00:00:01", ip="192.168.88.50", name="Телефон бухгалтера"))
+    lan.add_static(StaticLease(mac="00:0b:82:00:00:01", ip="192.168.1.50", name="Телефон бухгалтера"))
     assert calls["dhcp"][-1] == [("lan1", 2)]                      # Kea получил оба закреплённых
     assert lan.static_view()[1].in_pool
 
-    for bad, code in ((StaticLease(mac="00:0b:82:aa:bb:cc", ip="192.168.88.6"), 409),
-                      (StaticLease(mac="00:0b:82:00:00:02", ip="192.168.88.5"), 409),
+    for bad, code in ((StaticLease(mac="00:0b:82:aa:bb:cc", ip="192.168.1.6"), 409),
+                      (StaticLease(mac="00:0b:82:00:00:02", ip="192.168.1.5"), 409),
                       (StaticLease(mac="00:0b:82:00:00:03", ip="10.0.0.5"), 400),
-                      (StaticLease(mac="00:0b:82:00:00:04", ip="192.168.88.1"), 400)):
+                      (StaticLease(mac="00:0b:82:00:00:04", ip="192.168.1.1"), 400)):
         with pytest.raises(lan.LanError) as e:
             lan.add_static(bad)
         assert e.value.status == code
 
     lan.update(LanConfig(enabled=True, lease_time="1d"))           # смена LAN не теряет закреплённые
     assert len(store.load()["lan"]["dhcp-server"]["static-leases"]) == 2
-    lan.update_static("00:0b:82:aa:bb:cc", StaticLease(mac="00:0b:82:aa:bb:cc", ip="192.168.88.6"))
-    assert lan.delete_static("00:0B:82:00:00:01")[0].ip == "192.168.88.6"
+    lan.update_static("00:0b:82:aa:bb:cc", StaticLease(mac="00:0b:82:aa:bb:cc", ip="192.168.1.6"))
+    assert lan.delete_static("00:0B:82:00:00:01")[0].ip == "192.168.1.6"
     with pytest.raises(lan.LanError):
         lan.delete_static("00:0b:82:00:00:01")
 
@@ -184,10 +184,10 @@ def test_static_leases(env):
 def test_leases_mark_static(env, tmp_path):
     from app.models.lan import StaticLease
     lan.update(LanConfig(enabled=True))
-    lan.add_static(StaticLease(mac="00:0b:82:aa:bb:cc", ip="192.168.88.5", name="Телефон"))
+    lan.add_static(StaticLease(mac="00:0b:82:aa:bb:cc", ip="192.168.1.5", name="Телефон"))
     (tmp_path / "data" / "kea").mkdir(exist_ok=True)
     (tmp_path / "data" / "kea" / "kea-leases4.csv").write_text(
-        KEA_HEADER + "192.168.88.5,00:0b:82:aa:bb:cc,,4294967295,0,1,0,0,gxp,0,\n")
+        KEA_HEADER + "192.168.1.5,00:0b:82:aa:bb:cc,,4294967295,0,1,0,0,gxp,0,\n")
     row = lan.leases()[0]
     assert row.static and row.name == "Телефон" and row.expires is None
 
@@ -225,7 +225,7 @@ def test_segment_validation(env):
     kernel.links |= {"eth2", "eth3"}
     lan.update(LanConfig(enabled=True))
     with pytest.raises(lan.LanError, match="пересекаются"):
-        lan.add_segment(LanConfig(enabled=True, address="192.168.88.200/25", ports=["eth3"]))
+        lan.add_segment(LanConfig(enabled=True, address="192.168.1.200/25", ports=["eth3"]))
     with pytest.raises(lan.LanError, match="без портов"):
         lan.add_segment(LanConfig(enabled=True, address="10.20.0.1/24"))
     lan.add_segment(LanConfig(enabled=True, address="10.20.0.1/24", ports=["eth3"]))
@@ -245,12 +245,12 @@ def test_dhcp_settings_without_rebuild(env):
     from app.models.lan import DhcpSettings
     lan.update(LanConfig(enabled=True))
     fw_before = len(calls["fw"])
-    st = lan.update_dhcp("lan1", DhcpSettings(pool_start="192.168.88.100", pool_end="192.168.88.150",
-                                              lease_time="1d", dhcp_options={"ntp_servers": ["192.168.88.1"]}))
+    st = lan.update_dhcp("lan1", DhcpSettings(pool_start="192.168.1.100", pool_end="192.168.1.150",
+                                              lease_time="1d", dhcp_options={"ntp_servers": ["192.168.1.1"]}))
     assert len(calls["fw"]) == fw_before                            # мост не пересобирался
-    assert st.segments[0].settings.pool_start == "192.168.88.100"
+    assert st.segments[0].settings.pool_start == "192.168.1.100"
     saved = store.load()["lan"]["dhcp-server"]
-    assert saved["pool"] == "192.168.88.100-192.168.88.150" and saved["options"] == {"ntp_servers": ["192.168.88.1"]}
+    assert saved["pool"] == "192.168.1.100-192.168.1.150" and saved["options"] == {"ntp_servers": ["192.168.1.1"]}
     with pytest.raises(lan.LanError):
         lan.update_dhcp("lan1", DhcpSettings(pool_start="10.0.0.1", pool_end="10.0.0.9"))
     with pytest.raises(lan.LanError):
@@ -315,22 +315,22 @@ def test_change_network_moves_pool_and_static(env):
     """Смена адреса LAN: старый пул из формы и закреплённые адреса переезжают в новую сеть."""
     store, _, calls = env
     from app.models.lan import StaticLease
-    lan.update(LanConfig(enabled=True, pool_start="192.168.88.100", pool_end="192.168.88.200",
-                         dhcp_options={"dns_servers": ["192.168.88.1", "8.8.8.8"], "ntp_servers": ["192.168.88.1"]}))
-    lan.add_static(StaticLease(mac="00:0b:82:aa:bb:cc", ip="192.168.88.5", name="phone"))
-    lan.add_static(StaticLease(mac="00:0b:82:aa:bb:cd", ip="192.168.88.20", name="pc"))
+    lan.update(LanConfig(enabled=True, pool_start="192.168.1.100", pool_end="192.168.1.200",
+                         dhcp_options={"dns_servers": ["192.168.1.1", "8.8.8.8"], "ntp_servers": ["192.168.1.1"]}))
+    lan.add_static(StaticLease(mac="00:0b:82:aa:bb:cc", ip="192.168.1.5", name="phone"))
+    lan.add_static(StaticLease(mac="00:0b:82:aa:bb:cd", ip="192.168.1.20", name="pc"))
 
     raw = lan.get_segment("lan1").model_dump()                     # так присылает веб: пул — старый
-    raw["address"] = "192.168.1.1/24"
+    raw["address"] = "192.168.5.1/24"
     with pytest.raises(ValueError):
         LanConfig.model_validate(raw)                              # раньше — ошибка «вне сети»
     new = lan.coerce("lan1", raw)
-    assert (new.pool_start, new.pool_end) == ("192.168.1.100", "192.168.1.200")
-    assert new.dhcp_options.dns_servers == ["192.168.1.1", "8.8.8.8"]
-    assert new.dhcp_options.ntp_servers == ["192.168.1.1"]
+    assert (new.pool_start, new.pool_end) == ("192.168.5.100", "192.168.5.200")
+    assert new.dhcp_options.dns_servers == ["192.168.5.1", "8.8.8.8"]
+    assert new.dhcp_options.ntp_servers == ["192.168.5.1"]
     lan.update(new)
     y = store.load()["lan"]
-    assert [x["ip"] for x in y["dhcp-server"]["static-leases"]] == ["192.168.1.5", "192.168.1.20"]
+    assert [x["ip"] for x in y["dhcp-server"]["static-leases"]] == ["192.168.5.5", "192.168.5.20"]
     assert all(v.valid for v in lan.static_view())
 
 
@@ -338,20 +338,20 @@ def test_change_network_smaller_prefix(env):
     """Новая сеть меньше: диапазон не помещается — по умолчанию; адрес на месте роутера не переносится."""
     store, _, _ = env
     from app.models.lan import StaticLease
-    lan.update(LanConfig(enabled=True, pool_start="192.168.88.100", pool_end="192.168.88.250"))
-    lan.add_static(StaticLease(mac="00:0b:82:aa:bb:cc", ip="192.168.88.10", name="a"))
+    lan.update(LanConfig(enabled=True, pool_start="192.168.1.100", pool_end="192.168.1.250"))
+    lan.add_static(StaticLease(mac="00:0b:82:aa:bb:cc", ip="192.168.1.10", name="a"))
     raw = lan.get_segment("lan1").model_dump()
     raw["address"] = "10.10.0.10/27"
     new = lan.coerce("lan1", raw)
     assert new.pool_start and ipaddress.ip_address(new.pool_start) in new.network
     assert (new.pool_start, new.pool_end) == ("10.10.0.11", "10.10.0.30")
     lan.update(new)
-    assert store.load()["lan"]["dhcp-server"]["static-leases"][0]["ip"] == "192.168.88.10"   # совпал бы с роутером
+    assert store.load()["lan"]["dhcp-server"]["static-leases"][0]["ip"] == "192.168.1.10"   # совпал бы с роутером
 
 
 def test_same_network_keeps_pool(env):
-    lan.update(LanConfig(enabled=True, pool_start="192.168.88.100", pool_end="192.168.88.200"))
+    lan.update(LanConfig(enabled=True, pool_start="192.168.1.100", pool_end="192.168.1.200"))
     raw = lan.get_segment("lan1").model_dump()
-    raw["address"] = "192.168.88.254/24"
+    raw["address"] = "192.168.1.254/24"
     new = lan.coerce("lan1", raw)
-    assert (new.pool_start, new.pool_end) == ("192.168.88.100", "192.168.88.200")
+    assert (new.pool_start, new.pool_end) == ("192.168.1.100", "192.168.1.200")

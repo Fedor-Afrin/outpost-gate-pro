@@ -71,7 +71,7 @@ Unattended install (anything not given uses the default):
   --wan2 IF [--wan2-mode dhcp|static --wan2-address .. --wan2-gateway ..]   second provider
   --multiwan failover|balance
   --lan IF1,IF2             LAN ports ("-" = no LAN); default: all others except the SSH port
-  --lan-address A/M         router address in the LAN (192.168.88.1/24)
+  --lan-address A/M         router address in the LAN (192.168.1.1/24)
   --wan-management yes|no   router web UI and SSH from WAN (default yes if you are connected via WAN)
   --password PASS           admin password for the first start (otherwise admin has no password, login from LAN only)
   --api-port N  --cli-port N   web UI port (80) and SSH CLI port (2222); with --update: change the web port
@@ -191,16 +191,44 @@ show_ifaces() {
     done
 }
 
-pick_iface() {   # pick_iface "question" "default" -> IFACE ("" = none)
-    ask "$1" "$2"
-    local v="$REPLY"
-    [[ "$v" == "-" || -z "$v" ]] && { IFACE=""; return; }
-    [[ "$v" =~ ^[0-9]+$ && $v -ge 1 && $v -le ${#IFACES[@]} ]] && v="${IFACES[$((v - 1))]}"
-    in_list "$v" "${IFACES[@]}" || die "no such port: $v"
-    IFACE="$v"
+trim() {   # strip spaces around a value (keeps backslashes and quotes as typed)
+    local v="$1"; v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"; printf '%s' "$v"
 }
 
-check_cidr() { python3 -c "import ipaddress,sys; ipaddress.ip_interface(sys.argv[1])" "$1" 2>/dev/null; }
+again() {   # a wrong answer in the wizard: say why and ask again (with -y there is nobody to ask: stop)
+    [[ $YES -eq 1 ]] && die "$*"
+    warn "$*. Try again."
+}
+
+pick_iface() {   # pick_iface "question" "default" -> IFACE ("" = none)
+    local v
+    while true; do
+        ask "$1" "$2"
+        v=$(trim "$REPLY")
+        [[ "$v" == "-" || -z "$v" ]] && { IFACE=""; return; }
+        [[ "$v" =~ ^[0-9]+$ && $v -ge 1 && $v -le ${#IFACES[@]} ]] && v="${IFACES[$((v - 1))]}"
+        in_list "$v" "${IFACES[@]}" && { IFACE="$v"; return; }
+        again "no such port: $v"
+    done
+}
+
+# address with mask, like 192.168.1.1/24: a host address, not the network or broadcast address
+check_cidr() {
+    python3 - "$1" 2>/dev/null <<'PY'
+import ipaddress, sys
+v = sys.argv[1]
+i = ipaddress.ip_interface(v)
+assert "/" in v and i.version == 4
+assert i.network.prefixlen >= 31 or i.ip not in (i.network.network_address, i.network.broadcast_address)
+PY
+}
+check_ip() { python3 -c "import ipaddress,sys; assert ipaddress.ip_address(sys.argv[1]).version == 4" "$1" 2>/dev/null; }
+check_ip_list() {   # "1.1.1.1,8.8.8.8"
+    local d
+    IFS=, read -ra _ips <<<"$1"
+    [[ ${#_ips[@]} -ge 1 ]] || return 1
+    for d in "${_ips[@]}"; do check_ip "$(trim "$d")" || return 1; done
+}
 
 # --- wizard --------------------------------------------------------------------------------------
 wizard() {
@@ -225,13 +253,28 @@ wizard() {
         echo "    static - set by hand"
         local def=dhcp
         [[ $wan_ssh -eq 1 || -n "$(iface_ipv4 "$WAN")" ]] && def=none
-        ask "WAN mode" "$def"; WAN_MODE="$REPLY"
+        while true; do
+            ask "WAN mode" "$def"; WAN_MODE=$(trim "${REPLY,,}")
+            [[ "$WAN_MODE" =~ ^(none|dhcp|static)$ ]] && break
+            again "WAN mode: none, dhcp or static"
+        done
     fi
     [[ "$WAN_MODE" =~ ^(none|dhcp|static)$ ]] || die "WAN mode: none, dhcp or static"
     if [[ "$WAN_MODE" == static ]]; then
-        [[ -n "$WAN_ADDR" ]] || { ask "WAN IP address with mask" "$(iface_ipv4 "$WAN" | cut -d, -f1)"; WAN_ADDR="$REPLY"; }
-        [[ -n "$WAN_GW" ]] || { ask "Provider gateway" "$(ip -4 route show default dev "$WAN" 2>/dev/null | awk '{print $3; exit}')"; WAN_GW="$REPLY"; }
-        [[ -n "$WAN_DNS" ]] || { ask "DNS (comma-separated)" "1.1.1.1,8.8.8.8"; WAN_DNS="$REPLY"; }
+        until [[ -n "$WAN_ADDR" ]] && check_cidr "$WAN_ADDR"; do
+            [[ -n "$WAN_ADDR" ]] && again "WAN address '$WAN_ADDR': use the form 203.0.113.10/24"
+            ask "WAN IP address with mask" "$(iface_ipv4 "$WAN" | cut -d, -f1)"; WAN_ADDR=$(trim "$REPLY")
+            [[ -z "$WAN_ADDR" ]] && again "the WAN address is required for static mode"
+        done
+        until [[ -n "$WAN_GW" ]] && check_ip "$WAN_GW"; do
+            [[ -n "$WAN_GW" ]] && again "gateway '$WAN_GW': use the form 203.0.113.1"
+            ask "Provider gateway" "$(ip -4 route show default dev "$WAN" 2>/dev/null | awk '{print $3; exit}')"; WAN_GW=$(trim "$REPLY")
+            [[ -z "$WAN_GW" ]] && again "the gateway is required for static mode"
+        done
+        until [[ -n "$WAN_DNS" ]] && check_ip_list "$WAN_DNS"; do
+            [[ -n "$WAN_DNS" ]] && again "DNS '$WAN_DNS': use the form 1.1.1.1,8.8.8.8"
+            ask "DNS (comma-separated)" "1.1.1.1,8.8.8.8"; WAN_DNS=$(echo "$REPLY" | tr -d ' ')
+        done
     fi
     if [[ $wan_ssh -eq 1 && "$WAN_MODE" != none ]]; then
         warn "you are connected through $WAN: if the mode changes, the address may change and SSH will drop"
@@ -242,40 +285,70 @@ wizard() {
     local rest=() n
     for n in "${IFACES[@]}"; do [[ "$n" != "$WAN" ]] && rest+=("$n"); done
     if [[ -z "$WAN2" && $YES -eq 0 && ${#rest[@]} -ge 2 ]]; then
-        ask "Second provider WAN2 (port; Enter = none)" ""
-        WAN2="$REPLY"
-        [[ "$WAN2" =~ ^[0-9]+$ ]] && WAN2="${IFACES[$((WAN2 - 1))]:-}"
+        while true; do
+            ask "Second provider WAN2 (port; Enter = none)" ""
+            WAN2=$(trim "$REPLY")
+            [[ "$WAN2" =~ ^[0-9]+$ ]] && WAN2="${IFACES[$((WAN2 - 1))]:-}"
+            [[ -z "$WAN2" ]] || in_list "$WAN2" "${rest[@]}" && break
+            again "WAN2: no free port ${REPLY}"
+        done
     fi
     if [[ -n "$WAN2" ]]; then
         in_list "$WAN2" "${rest[@]}" || die "WAN2: no free port $WAN2"
-        [[ -n "$WAN2_MODE" ]] || { ask "WAN2 mode (dhcp / static)" dhcp; WAN2_MODE="$REPLY"; }
+        if [[ -z "$WAN2_MODE" ]]; then
+            while true; do
+                ask "WAN2 mode (dhcp / static)" dhcp; WAN2_MODE=$(trim "${REPLY,,}")
+                [[ "$WAN2_MODE" =~ ^(dhcp|static)$ ]] && break
+                again "WAN2 mode: dhcp or static"
+            done
+        fi
         [[ "$WAN2_MODE" =~ ^(dhcp|static)$ ]] || die "WAN2 mode: dhcp or static"
         if [[ "$WAN2_MODE" == static ]]; then
-            [[ -n "$WAN2_ADDR" ]] || { ask "WAN2 IP address with mask" ""; WAN2_ADDR="$REPLY"; }
-            [[ -n "$WAN2_GW" ]] || { ask "WAN2 gateway" ""; WAN2_GW="$REPLY"; }
+            until [[ -n "$WAN2_ADDR" ]] && check_cidr "$WAN2_ADDR"; do
+                [[ -n "$WAN2_ADDR" ]] && again "WAN2 address '$WAN2_ADDR': use the form 198.51.100.10/24"
+                ask "WAN2 IP address with mask" ""; WAN2_ADDR=$(trim "$REPLY")
+                [[ -z "$WAN2_ADDR" ]] && again "the WAN2 address is required for static mode"
+            done
+            until [[ -n "$WAN2_GW" ]] && check_ip "$WAN2_GW"; do
+                [[ -n "$WAN2_GW" ]] && again "WAN2 gateway '$WAN2_GW': use the form 198.51.100.1"
+                ask "WAN2 gateway" ""; WAN2_GW=$(trim "$REPLY")
+                [[ -z "$WAN2_GW" ]] && again "the WAN2 gateway is required for static mode"
+            done
         fi
-        [[ -n "$MULTIWAN_MODE" ]] || { ask "Two providers: failover or balance" failover; MULTIWAN_MODE="$REPLY"; }
+        if [[ -z "$MULTIWAN_MODE" ]]; then
+            while true; do
+                ask "Two providers: failover or balance" failover; MULTIWAN_MODE=$(trim "${REPLY,,}")
+                [[ "$MULTIWAN_MODE" =~ ^(failover|balance)$ ]] && break
+                again "mode: failover or balance"
+            done
+        fi
         [[ "$MULTIWAN_MODE" =~ ^(failover|balance)$ ]] || die "mode: failover or balance"
         local r2=(); for n in "${rest[@]}"; do [[ "$n" != "$WAN2" ]] && r2+=("$n"); done; rest=("${r2[@]}")
     fi
 
     # LAN
-    if [[ -z "$LAN" ]]; then
-        local def=() n
-        for n in "${rest[@]}"; do in_list "$n" "${SSH_IFS[@]}" || def+=("$n"); done
-        local d; d=$(IFS=,; echo "${def[*]}"); [[ -z "$d" ]] && d="-"
-        ask "LAN ports (comma-separated; \"-\" = no LAN)" "$d"; LAN="$REPLY"
-    fi
-    LAN_PORTS=()
-    if [[ "$LAN" != "-" && -n "$LAN" ]]; then
-        IFS=, read -ra parts <<<"$LAN"
-        for n in "${parts[@]}"; do
-            n=$(echo "$n" | xargs)
-            [[ "$n" =~ ^[0-9]+$ ]] && n="${IFACES[$((n - 1))]:-}"
-            in_list "$n" "${rest[@]}" || die "LAN: port $n is used by WAN or does not exist"
-            LAN_PORTS+=("$n")
-        done
-    fi
+    local lan_cli=0; [[ -n "$LAN" ]] && lan_cli=1
+    local def=() d bad_port
+    for n in "${rest[@]}"; do in_list "$n" "${SSH_IFS[@]}" || def+=("$n"); done
+    d=$(IFS=,; echo "${def[*]}"); [[ -z "$d" ]] && d="-"
+    while true; do
+        [[ $lan_cli -eq 1 ]] || { ask "LAN ports (comma-separated; \"-\" = no LAN)" "$d"; LAN="$REPLY"; }
+        LAN_PORTS=(); bad_port=""
+        if [[ "$LAN" != "-" && -n "$LAN" ]]; then
+            IFS=, read -ra parts <<<"$LAN"
+            for n in "${parts[@]}"; do
+                n=$(trim "$n")
+                [[ -z "$n" ]] && continue
+                local p="$n"
+                [[ "$n" =~ ^[0-9]+$ ]] && n="${IFACES[$((n - 1))]:-}"
+                in_list "$n" "${rest[@]}" || { bad_port="$p"; break; }
+                LAN_PORTS+=("$n")
+            done
+        fi
+        [[ -z "$bad_port" ]] && break
+        [[ $lan_cli -eq 1 ]] && die "LAN: port $bad_port is used by WAN or does not exist"
+        again "LAN: port $bad_port is used by WAN or does not exist"
+    done
     for n in "${LAN_PORTS[@]}"; do
         if in_list "$n" "${SSH_IFS[@]}"; then
             warn "you are connected through $n: in the LAN bridge it loses its address and SSH will drop"
@@ -283,8 +356,15 @@ wizard() {
             yesno "Put $n into the LAN anyway?" n || die "remove $n from the LAN and run again"
         fi
     done
-    [[ -n "$LAN_ADDR" ]] || { ask "Router address in the LAN" "192.168.88.1/24"; LAN_ADDR="$REPLY"; }
-    check_cidr "$LAN_ADDR" || die "LAN address: for example 192.168.88.1/24"
+    if [[ -n "$LAN_ADDR" ]]; then
+        check_cidr "$LAN_ADDR" || die "LAN address '$LAN_ADDR': use the form 192.168.1.1/24"
+    else
+        while true; do
+            ask "Router address in the LAN" "192.168.1.1/24"; LAN_ADDR=$(trim "$REPLY")
+            check_cidr "$LAN_ADDR" && break
+            again "LAN address '$LAN_ADDR': use the form 192.168.1.1/24 (digits and dots, then / and the mask)"
+        done
+    fi
 
     # management from WAN
     if [[ -z "$WAN_MGMT" ]]; then

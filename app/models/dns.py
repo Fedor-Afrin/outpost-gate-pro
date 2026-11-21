@@ -14,7 +14,7 @@ HOST_RE = re.compile(r"^([A-Za-z0-9_]([A-Za-z0-9_-]{0,61}[A-Za-z0-9])?\.)*[A-Za-
 
 
 def reverse_zone_for(network: str) -> str:
-    """192.168.88.0/24 -> 88.168.192.in-addr.arpa (только границы октетов: /8, /16, /24)."""
+    """192.168.1.0/24 -> 1.168.192.in-addr.arpa (только границы октетов: /8, /16, /24)."""
     net = ipaddress.IPv4Network(network, strict=False)
     if net.prefixlen not in (8, 16, 24):
         raise ValueError("обратная зона строится для сети /8, /16 или /24")
@@ -23,7 +23,7 @@ def reverse_zone_for(network: str) -> str:
 
 
 def reverse_network(zone: str) -> ipaddress.IPv4Network | None:
-    """88.168.192.in-addr.arpa -> 192.168.88.0/24; не обратная зона — None."""
+    """1.168.192.in-addr.arpa -> 192.168.1.0/24; не обратная зона — None."""
     if not zone.endswith(".in-addr.arpa"):
         return None
     parts = zone[: -len(".in-addr.arpa")].split(".")
@@ -45,7 +45,7 @@ def _host(v: str, what: str) -> str:
 class DnsRecord(BaseModel):
     name: str = Field(examples=["www", "@", "_sip._udp"], description="Имя внутри зоны; @ — сама зона")
     type: str = Field("A")
-    value: str = Field(examples=["192.168.88.20"])
+    value: str = Field(examples=["192.168.1.20"])
     ttl: int | None = Field(None, ge=0, le=604800, description="Пусто — TTL зоны")
     priority: int | None = Field(None, ge=0, le=65535, description="MX и SRV")
     weight: int | None = Field(None, ge=0, le=65535, description="SRV")
@@ -127,7 +127,7 @@ class DnsRecord(BaseModel):
 
 
 class DnsZone(BaseModel):
-    name: str = Field(examples=["office.lan", "88.168.192.in-addr.arpa"])
+    name: str = Field(examples=["office.lan", "1.168.192.in-addr.arpa"])
     ttl: int = Field(3600, ge=60, le=604800)
     dhcp_names: bool = Field(True, description="Добавлять имена устройств из DHCP (сегменты с этим доменом)")
     auto_ptr: bool = Field(True, description="Обратная зона: PTR для всех A-записей из её сети")
@@ -155,7 +155,7 @@ class DnsZone(BaseModel):
         v = v.strip().lower().rstrip(".")
         if v.endswith(".in-addr.arpa"):
             if reverse_network(v) is None:
-                raise ValueError(f"обратная зона '{v}': нужен вид 88.168.192.in-addr.arpa")
+                raise ValueError(f"обратная зона '{v}': нужен вид 1.168.192.in-addr.arpa")
             return v
         return check_domain(v, "зона")
 

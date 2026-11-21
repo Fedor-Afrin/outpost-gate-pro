@@ -26,7 +26,7 @@ def _network(v: str) -> str:
     try:
         return str(ipaddress.IPv4Network(v.strip(), strict=False))
     except ValueError as e:
-        raise ValueError(f"неверная сеть '{v}': нужен вид 192.168.88.0/24") from e
+        raise ValueError(f"неверная сеть '{v}': нужен вид 192.168.1.0/24") from e
 
 
 def _area(v: str | int) -> str:
@@ -78,7 +78,7 @@ def check_prefix(v: str) -> str:
 
 # --- OSPF ----------------------------------------------------------------------------------------
 class OspfNetwork(BaseModel):
-    network: str = Field(examples=["192.168.88.0/24"], description="Сеть, интерфейсы которой участвуют в OSPF")
+    network: str = Field(examples=["192.168.1.0/24"], description="Сеть, интерфейсы которой участвуют в OSPF")
     area: str = Field("0.0.0.0", examples=["0", "0.0.0.0"])
 
     _n = field_validator("network")(classmethod(lambda cls, v: _network(v)))

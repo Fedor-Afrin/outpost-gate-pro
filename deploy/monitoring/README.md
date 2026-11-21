@@ -30,7 +30,7 @@
 
 Проверка без Prometheus:
 ```bash
-curl -H "Authorization: Bearer ТОКЕН" http://192.168.88.1/metrics
+curl -H "Authorization: Bearer ТОКЕН" http://192.168.1.1/metrics
 ```
 
 **Dev-режим (роутер в Docker на этом же компьютере).** Prometheus ходит на
@@ -60,8 +60,8 @@ CPU > 90 %, диск > 90 %, роутер перезапустился, данн
 
 Проверка с Zabbix server:
 ```bash
-zabbix_get -s 192.168.88.1 -k 'outpost.get[wan.up]'
-zabbix_get -s 192.168.88.1 -k 'outpost.discovery[if]'
+zabbix_get -s 192.168.1.1 -k 'outpost.get[wan.up]'
+zabbix_get -s 192.168.1.1 -k 'outpost.discovery[if]'
 ```
 
 В dev-режиме порт агента проброшен на хост как 10060 (10050 обычно занят агентом
@@ -77,7 +77,7 @@ server» добавьте `172.16.0.0/12`.
 
 Проверка:
 ```bash
-snmpwalk -v2c -c office 192.168.88.1 IF-MIB::ifDescr
-snmpwalk -v3 -l authPriv -u zbx -a SHA -A 'пароль1' -x AES -X 'пароль2' 192.168.88.1 system
+snmpwalk -v2c -c office 192.168.1.1 IF-MIB::ifDescr
+snmpwalk -v3 -l authPriv -u zbx -a SHA -A 'пароль1' -x AES -X 'пароль2' 192.168.1.1 system
 ```
 В dev-режиме: `snmpwalk -v2c -c office localhost:1161 system` и `172.16.0.0/12` в «Откуда ещё».

@@ -7,11 +7,11 @@ from pydantic import BaseModel, Field, field_validator
 
 
 def _normalize(value: str) -> str:
-    """'192.168.88.1/24' -> проверка и нормализация. Без маски — /32, как в RouterOS."""
+    """'192.168.1.1/24' -> проверка и нормализация. Без маски — /32, как в RouterOS."""
     try:
         iface = ipaddress.ip_interface(value.strip())
     except ValueError as e:
-        raise ValueError(f"неверный адрес '{value}': ожидается формат 192.168.88.1/24") from e
+        raise ValueError(f"неверный адрес '{value}': ожидается формат 192.168.1.1/24") from e
     if iface.version != 4:
         raise ValueError("здесь только IPv4 (IPv6 будет в разделе /ipv6 address)")
     return str(iface)
@@ -19,7 +19,7 @@ def _normalize(value: str) -> str:
 
 class AddressCreate(BaseModel):
     """Тело запроса: /ip address add address=... interface=..."""
-    address: str = Field(examples=["192.168.88.1/24"])
+    address: str = Field(examples=["192.168.1.1/24"])
     interface: str = Field(examples=["eth1"])
     comment: str | None = None
     disabled: bool = False
