@@ -34,7 +34,8 @@ IMAGE=outpost-gate-pro:latest
 CONTAINER=outpost-gate-pro
 DEFAULT_REMOTE=ghcr.io/fedor-afrin/outpost-gate-pro:latest
 REMOTE_IMAGE="${OG_IMAGE:-}"   # set: download this ready image (GHCR) instead of building it here
-INSTALLER="${OG_INSTALLER:-script}"   # script | container (the installer image sets it)
+INSTALLER="${OG_INSTALLER:-script}"
+DOCKER_RESTART=now                     # later: restart_docker() handed it to systemd   # script | container (the installer image sets it)
 NETWORKD_FILE=$P/etc/systemd/network/05-outpost-gate-unmanaged.network
 NM_FILE=$P/etc/NetworkManager/conf.d/99-outpost-gate.conf
 SYSCTL_FILE=$P/etc/sysctl.d/99-outpost-gate.conf
@@ -362,6 +363,27 @@ install_docker() {
     systemctl enable --now docker >/dev/null 2>&1 || true
 }
 
+restart_docker() {
+    # The installer container lives inside Docker: "systemctl restart docker" stops it and kills
+    # this script halfway. In that mode the restart is handed to the host's systemd and runs
+    # a few seconds after the installer has finished.
+    if [[ "$INSTALLER" == container ]]; then
+        if systemd-run --quiet --collect --on-active=5 /bin/systemctl restart docker 2>/dev/null; then
+            DOCKER_RESTART=later
+            return 0
+        fi
+        warn "systemd-run is not available; Docker restarts now and this installer window closes"
+        warn "run the same command again afterwards: the installer continues from where it stopped"
+    fi
+    systemctl restart docker
+}
+
+other_containers() {
+    # running containers except the router and the installer container itself (OG_SELF = its ID)
+    docker ps --format '{{.ID}} {{.Names}}' 2>/dev/null \
+        | awk -v me="${OG_SELF:-none}" -v c="$CONTAINER" 'index($1, me) != 1 && $2 != c {print $2}'
+}
+
 configure_docker() {
     # Docker must not touch the firewall: its FORWARD DROP blocks the router's transit traffic
     mkdir -p "$(dirname "$DAEMON_JSON")" "$CONF_DIR"
@@ -387,14 +409,18 @@ EOF
 )
     if [[ "$changed" == yes ]]; then
         local others
-        others=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -vx "$CONTAINER" || true)
+        others=$(other_containers)
         if [[ -n "$others" ]]; then
             warn "other containers are running on this server: $(echo $others)"
             warn "without Docker iptables, their published ports and internet access through Docker NAT stop working"
             yesno "Continue?" y || die "cancelled"
         fi
-        systemctl restart docker
-        ok "Docker no longer touches the firewall (daemon.json: iptables=false)"
+        restart_docker
+        if [[ "$DOCKER_RESTART" == later ]]; then
+            ok "daemon.json: iptables=false (Docker restarts when the installer has finished)"
+        else
+            ok "Docker no longer touches the firewall (daemon.json: iptables=false)"
+        fi
     else
         ok "Docker is already configured (iptables=false)"
     fi
@@ -651,6 +677,11 @@ summary() {
     hr
 }
 
+docker_restart_note() {
+    [[ "$DOCKER_RESTART" == later ]] || return 0
+    echo "  ${Y}Docker restarts in a few seconds${N} (daemon.json changed); the router container comes back by itself."
+}
+
 # --- actions ------------------------------------------------------------------------------------
 do_install() {
     preflight
@@ -666,6 +697,7 @@ do_install() {
     save_state
     start
     summary
+    docker_restart_note
 }
 
 port_busy() {
@@ -761,7 +793,7 @@ do_uninstall() {
     if [[ -f "$CONF_DIR/daemon.json.orig" ]]; then
         if [[ -s "$CONF_DIR/daemon.json.orig" ]]; then cp -a "$CONF_DIR/daemon.json.orig" "$DAEMON_JSON"; else rm -f "$DAEMON_JSON"; fi
         rm -f "$CONF_DIR/daemon.json.orig"
-        systemctl restart docker || true
+        restart_docker || true
         ok "daemon.json restored"
     fi
     rm -f "$STATE" "$DEPLOY/.env"
@@ -771,6 +803,7 @@ do_uninstall() {
         ok "settings and data deleted"
     fi
     ok "OutpostGate Pro removed. The ports are back under netplan/NetworkManager (a server reboot gives a clean state)"
+    docker_restart_note
 }
 
 case "$ACTION" in

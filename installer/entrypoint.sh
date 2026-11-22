@@ -23,5 +23,8 @@ echo ">>> Copying the installer to $DEST on the host"
 on_host mkdir -p "$DEST"
 tar -C /payload -cf - . | on_host tar -C "$DEST" --no-same-owner -xf -
 
-exec nsenter -t 1 -m -u -i -n -p -- env OG_IMAGE="$IMAGE" OG_INSTALLER=container TERM="${TERM:-xterm}" \
+# the container ID: install.sh must not count the installer itself as "another container"
+SELF=$(hostname)
+
+exec nsenter -t 1 -m -u -i -n -p -- env OG_IMAGE="$IMAGE" OG_INSTALLER=container OG_SELF="$SELF" TERM="${TERM:-xterm}" \
     bash "$DEST/install.sh" "$@"
