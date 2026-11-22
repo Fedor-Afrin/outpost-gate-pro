@@ -352,11 +352,14 @@ def apply(cfg: FilesConfig | None = None) -> None:
         conf = str(_data("smb.conf"))
         # SIGHUP только перечитывает конфиг и не меняет адреса, на которых слушает smbd:
         # снятый сегмент продолжал обслуживаться. Поэтому процессы перезапускаются.
+        # Samba при остановке шлёт SIGTERM всей своей группе процессов, поэтому
+        # smbd/nmbd запускаются в отдельной сессии (new_session=True), иначе
+        # вместе с ними останавливается весь контейнер.
         _smbd.stop()
-        _smbd.start(["smbd", "--foreground", "--no-process-group", "--debug-stdout", "-s", conf])
+        _smbd.start(["smbd", "--foreground", "--no-process-group", "--debug-stdout", "-s", conf], new_session=True)
         _nmbd.stop()
         if cfg.netbios:
-            _nmbd.start(["nmbd", "--foreground", "--no-process-group", "--debug-stdout", "-s", conf])
+            _nmbd.start(["nmbd", "--foreground", "--no-process-group", "--debug-stdout", "-s", conf], new_session=True)
 
 
 def update(new: FilesConfig) -> FilesStatus:

@@ -14,11 +14,14 @@ class ManagedProcess:
     def running(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
 
-    def start(self, cmd: list[str], env: dict | None = None) -> None:
+    def start(self, cmd: list[str], env: dict | None = None, new_session: bool = False) -> None:
+        """new_session=True — запустить в отдельной сессии и группе процессов.
+        Нужно для демонов, которые при остановке рассылают SIGTERM всей своей группе
+        (smbd/nmbd с --no-process-group): иначе сигнал получает и сам роутер (PID 1)."""
         with self._lock:
             if self.running():
                 return
-            self._proc = subprocess.Popen(cmd, env=env)   # вывод — в docker logs
+            self._proc = subprocess.Popen(cmd, env=env, start_new_session=new_session)   # вывод — в docker logs
             print(f"[proc] {self.name} запущен (pid {self._proc.pid})")
 
     def signal(self, sig: int) -> bool:
