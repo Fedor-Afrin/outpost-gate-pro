@@ -93,21 +93,26 @@ def save_syntax(api: Api, syntax: str) -> None:
         pass
 
 
-def ask_syntax(timeout: float = 20.0) -> tuple[str, bool]:
-    """Первый вход: спросить синтаксис. -> (синтаксис, ответил ли человек).
-    Нет ответа за timeout (скрипт, Ansible) — RouterOS: дальше пойдёт обычное приглашение."""
+def ask_syntax(default: str = "routeros", timeout: float = 20.0) -> tuple[str, bool]:
+    """Вход в оболочку: спросить синтаксис при каждом входе. Enter — прежний выбор (по умолчанию RouterOS).
+    -> (синтаксис, ответил ли человек). Нет ответа за timeout — прежний выбор, и он не перезаписывается."""
     import select
+    mark = "2" if default == "linux" else "1"
     print(SYNTAX_QUESTION)
-    print("  Выбор [1]: ", end="", flush=True)
+    print(f"  Выбор [{mark}]: ", end="", flush=True)
     try:
         ready, _, _ = select.select([sys.stdin], [], [], timeout)
     except (OSError, ValueError):
         ready = []
     if not ready:
-        print("1")
-        return "routeros", False
+        print(mark)
+        return default, False
     answer = sys.stdin.readline().strip().lower()
-    return ("linux" if answer in ("2", "linux", "l") else "routeros"), True
+    if answer in ("2", "linux", "l"):
+        return "linux", True
+    if answer in ("1", "routeros", "mikrotik", "ros", "r"):
+        return "routeros", True
+    return default, True                      # Enter или непонятный ответ — прежний выбор
 
 
 def run_line(ctx: commands.Ctx, line: str, cwd: list[str], syntax: str) -> list[str]:
@@ -135,9 +140,11 @@ def run_one(ctx: commands.Ctx, line: str) -> int:
 def interactive(ctx: commands.Ctx, identity: str) -> None:
     cwd: list[str] = []
     syntax = get_syntax(ctx.api)
-    if syntax is None:
-        syntax, answered = ask_syntax()
-        save_syntax(ctx.api, syntax)
+    if not os.getenv("OG_SYNTAX") and sys.stdin.isatty():   # человек у терминала: спрашиваем при каждом входе
+        syntax, answered = ask_syntax(syntax or "routeros")
+        if answered:
+            save_syntax(ctx.api, syntax)
+    syntax = syntax or "routeros"
     ctx.color = use_color()
     ctx.lang = get_prefs(ctx.api).get("lang") or "en"
     try:
