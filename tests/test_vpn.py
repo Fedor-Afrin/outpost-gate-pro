@@ -121,7 +121,7 @@ def test_full_mode(env):
     assert _routes(kernel, "wg0") == ["0.0.0.0/1", "128.0.0.0/1"]
     ep = [r for r in kernel.routes if r["dst"] == "203.0.113.7/32"]
     assert ep and ep[0]["gateway"] == "172.18.0.1"                  # до сервера — через WAN
-    assert ("wg", "setconf", "wg0", str(vpn._data("wg0.conf"))) in wg_calls
+    assert ("wg", "setconf", "wg0", "/dev/stdin") in wg_calls
     conf = vpn._data("wg0.conf").read_text()
     assert "AllowedIPs = 0.0.0.0/0" in conf and "Endpoint = 203.0.113.7:51820" in conf
     rules = fw[-1]
@@ -200,7 +200,7 @@ def test_amneziawg(env):
     assert cfg.obfuscation["Jc"] == "4" and cfg.obfuscation["I1"] == "<b 0xc200#tag>"  # # внутри I1 сохранён
     vpn.update("amneziawg", cfg.model_copy(update={"enabled": True}))
     assert "awg0" in kernel.links and _routes(kernel, "awg0") == ["0.0.0.0/1", "128.0.0.0/1"]
-    assert ("awg", "setconf", "awg0", str(vpn._data("awg0.conf"))) in wg_calls
+    assert ("awg", "setconf", "awg0", "/dev/stdin") in wg_calls
     conf = vpn._data("awg0.conf").read_text()
     assert "Jc = 4" in conf and "H4 = 4" in conf and "I1 = <b 0xc200#tag>" in conf
     assert fw[-1].iface == "awg0"

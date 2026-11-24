@@ -290,8 +290,10 @@ def _setup_wg(kind: str, cfg: WgConfig) -> None:
                    "endpoint_ip": endpoint_ip, "dns": cfg.dns, "since": time.time()}
     save_state(state)
 
-    conf = _secret_file(f"{iface}.conf", wg_conf(cfg, endpoint_ip, obfuscation=kind == "amneziawg", iface=iface))
-    _tool(kind, "setconf", iface, str(conf))
+    conf_text = wg_conf(cfg, endpoint_ip, obfuscation=kind == "amneziawg", iface=iface)
+    _secret_file(f"{iface}.conf", conf_text)     # копия на диске — для ручной проверки
+    # конфиг через stdin (/dev/stdin): wg не открывает путь к файлу — в контейнере GNS3 это давало EACCES
+    _tool(kind, "setconf", iface, "/dev/stdin", stdin=conf_text)
     for a in cfg.addresses:
         netlink.addr_add(iface, a)
     netlink.link_set_mtu(iface, cfg.mtu)
